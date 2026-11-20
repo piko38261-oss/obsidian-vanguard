@@ -1,14 +1,24 @@
-/* OBSIDIAN VANGUARD // FORGED BRONZE & IRON DARK FANTASY ARPG UI */
+/* =========================================================================
+   OBSIDIAN VANGUARD // 16-BIT DARK GOTHIC PIXEL ART UI SYSTEM
+   ========================================================================= */
 :root {
-  --ov-iron-deep: #06080e;
-  --ov-iron-plate: #111624;
-  --ov-bronze-dark: #5c3b16;
-  --ov-bronze-mid: #9a6728;
-  --ov-gold-trim: #d9a036;
-  --ov-gold-bright: #fcd34d;
-  --ov-crimson: #dc2626;
-  --ov-amber: #f97316;
-  --ov-cyan: #22d3ee;
+  --px-bg-dark: #06080f;
+  --px-panel-top: #181d2c;
+  --px-panel-bot: #0b0e17;
+  --px-subbox: #070a12;
+  --px-bronze-dark: #4a3012;
+  --px-bronze-mid: #9a6728;
+  --px-gold: #f59e0b;
+  --px-gold-hi: #fef08a;
+  --px-cyan: #22d3ee;
+  --px-crimson: #ef4444;
+}
+
+*,
+*::before,
+*::after {
+  border-radius: 0px !important;
+  box-sizing: border-box;
 }
 
 html,
@@ -18,122 +28,234 @@ body {
   margin: 0;
   padding: 0;
   overflow: hidden;
+  font-family: 'Pixelify Sans', 'Chakra Petch', monospace;
+  -webkit-font-smoothing: none;
+  font-smooth: never;
 }
 
 #game-canvas {
   display: block;
   width: 100vw;
   height: 100vh;
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
 }
 
-/* Sculpted Dark Iron & Antique Bronze ARPG Frame */
+/* -------------------------------------------------------------------------
+   1. PIXEL PANEL (3-LAYER STEPPED BRONZE & IRON BEVEL FRAME)
+   ------------------------------------------------------------------------- */
+.pixel-panel,
 .glass-panel,
 .ov-chamfer-panel {
   position: relative;
-  background:
-    linear-gradient(180deg, rgba(25, 30, 44, 0.96) 0%, rgba(12, 15, 24, 0.98) 50%, rgba(7, 9, 15, 0.99) 100%);
-  border: 2px solid #8c5d27;
-  outline: 1px solid rgba(252, 211, 77, 0.24);
-  outline-offset: -4px;
-  border-radius: 4px;
+  background: linear-gradient(180deg, var(--px-panel-top) 0%, var(--px-panel-bot) 100%);
+  border: 2px solid var(--px-bronze-mid);
   box-shadow:
-    inset 0 1px 0 rgba(254, 240, 138, 0.28),
-    inset 0 -2px 6px rgba(0, 0, 0, 0.9),
-    0 0 0 1px #040508,
-    0 12px 28px rgba(0, 0, 0, 0.82);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
+    /* Inner pixel highlight top & left */
+    inset 2px 2px 0px rgba(254, 240, 138, 0.25),
+    /* Inner dark bevel bottom & right */
+    inset -2px -2px 0px #030408,
+    /* Outer dark pixel outline + hard drop shadow */
+    0 0 0 2px #030408,
+    4px 4px 0px rgba(2, 3, 6, 0.88);
 }
 
-/* Forged Bronze / Iron Action Button */
+/* Corner Rivets on Main Panels */
+.pixel-panel::before {
+  content: '';
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  right: 3px;
+  height: 2px;
+  background:
+    linear-gradient(90deg, #fcd34d 0 2px, transparent 2px calc(100% - 2px), #fcd34d calc(100% - 2px) 100%);
+  pointer-events: none;
+}
+
+/* Recessed Pixel Sub-Container */
+.pixel-subbox {
+  background-color: var(--px-subbox);
+  border: 2px solid #5c3b16;
+  box-shadow:
+    inset 2px 2px 0px #020306,
+    inset -2px -2px 0px rgba(251, 191, 36, 0.14);
+}
+
+/* -------------------------------------------------------------------------
+   2. PIXEL ACTION BUTTONS & SKILL SLOTS
+   ------------------------------------------------------------------------- */
+.pixel-btn,
 .action-btn {
-  background:
-    linear-gradient(180deg, rgba(42, 46, 62, 0.96) 0%, rgba(18, 21, 32, 0.98) 52%, rgba(9, 11, 18, 0.99) 100%);
-  border: 1.5px solid #9a6728;
-  border-radius: 4px;
+  background: linear-gradient(180deg, #272e44 0%, #131724 100%);
+  border: 2px solid var(--px-bronze-mid);
   box-shadow:
-    inset 0 1px 0 rgba(254, 240, 138, 0.22),
-    inset 0 -1px 3px rgba(0, 0, 0, 0.85),
-    0 4px 10px rgba(0, 0, 0, 0.65);
-  transition: transform 120ms ease, border-color 120ms ease, box-shadow 120ms ease, filter 120ms ease;
+    inset 2px 2px 0px rgba(254, 240, 138, 0.28),
+    inset -2px -2px 0px #05070c,
+    2px 2px 0px #020306;
+  text-shadow: 1px 1px 0px #020306;
+  transition: none;
 }
 
+.pixel-btn:hover,
 .action-btn:hover {
-  transform: translateY(-1px);
-  border-color: #fbbf24;
-  filter: brightness(1.08);
+  background: linear-gradient(180deg, #353f5c 0%, #1a2032 100%);
+  border-color: #fcd34d;
   box-shadow:
-    inset 0 1px 0 rgba(254, 240, 138, 0.36),
-    0 0 14px rgba(245, 158, 11, 0.32);
+    inset 2px 2px 0px rgba(254, 240, 138, 0.45),
+    inset -2px -2px 0px #05070c,
+    0 0 0 2px rgba(251, 191, 36, 0.25),
+    2px 2px 0px #020306;
+  transform: translate(-1px, -1px);
 }
 
+.pixel-btn:active,
 .action-btn:active {
-  transform: translateY(1px);
+  transform: translate(1px, 1px);
+  box-shadow:
+    inset 2px 2px 0px #030408,
+    inset -2px -2px 0px rgba(254, 240, 138, 0.2);
 }
 
-/* Ornate ARPG Skill Socket */
+.pixel-btn:disabled,
+.action-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  transform: none;
+}
+
+/* Golden Primary Pixel CTA Button */
+.pixel-btn-gold {
+  background: linear-gradient(180deg, #fbbf24 0%, #d97706 55%, #b45309 100%);
+  color: #090b10 !important;
+  border: 2px solid #fef08a;
+  box-shadow:
+    inset 2px 2px 0px #fef9c3,
+    inset -2px -2px 0px #78350f,
+    0 0 0 2px #040508,
+    3px 3px 0px #020306;
+  text-shadow: none;
+}
+
+.pixel-btn-gold:hover {
+  background: linear-gradient(180deg, #fde047 0%, #f59e0b 60%, #d97706 100%);
+  transform: translate(-1px, -1px);
+}
+
+.pixel-btn-gold:active {
+  transform: translate(1px, 1px);
+}
+
+/* Pixel Skill Socket */
 .ov-skill-slot {
   background:
-    radial-gradient(circle at 50% 20%, rgba(251, 191, 36, 0.16), transparent 68%),
-    linear-gradient(180deg, rgba(28, 32, 46, 0.98) 0%, rgba(10, 12, 20, 0.99) 100%);
-  border: 2px solid #8c5d27;
-  outline: 1px solid rgba(252, 211, 77, 0.18);
-  outline-offset: -3px;
-  border-radius: 4px;
+    radial-gradient(circle at 50% 25%, rgba(251, 191, 36, 0.16), transparent 70%),
+    linear-gradient(180deg, #1c2233 0%, #090c14 100%);
+  border: 2px solid var(--px-bronze-mid);
   box-shadow:
-    inset 0 1px 0 rgba(254, 240, 138, 0.22),
-    inset 0 0 12px rgba(0, 0, 0, 0.85),
-    0 6px 14px rgba(0, 0, 0, 0.72);
-  transition: transform 120ms ease, border-color 120ms ease, box-shadow 120ms ease;
+    inset 2px 2px 0px rgba(254, 240, 138, 0.22),
+    inset -2px -2px 0px #030408,
+    2px 2px 0px #020306;
+  text-shadow: 1px 1px 0px #020306;
 }
 
 .ov-skill-slot:hover {
-  transform: translateY(-2px);
   border-color: #fcd34d;
-  box-shadow:
-    inset 0 1px 0 rgba(254, 240, 138, 0.35),
-    0 0 16px rgba(245, 158, 11, 0.38);
+  transform: translateY(-2px);
 }
 
-/* Ornate Gauge Tracks inside HUD */
+/* -------------------------------------------------------------------------
+   3. SEGMENTED PIXEL PROGRESS BARS & PHASE PIPS
+   ------------------------------------------------------------------------- */
+.pixel-bar-track {
+  border: 2px solid #5c3b16;
+  box-shadow:
+    inset 2px 2px 0px #020306,
+    0 0 0 1px #020306;
+  position: relative;
+}
+
+.pixel-pip {
+  border: 1px solid #083344;
+  box-shadow:
+    inset 1px 1px 0px #cffafe,
+    inset -1px -1px 0px #0e7490,
+    0 0 0 1px #020306;
+}
+
 #hud-hp-bar {
-  background: linear-gradient(90deg, #7f1d1d 0%, #dc2626 45%, #f97316 85%, #fbbf24 100%) !important;
-  box-shadow: inset 0 1px 0 rgba(254, 202, 202, 0.45);
+  background:
+    repeating-linear-gradient(
+      90deg,
+      transparent 0px,
+      transparent 10px,
+      rgba(5, 7, 12, 0.45) 10px,
+      rgba(5, 7, 12, 0.45) 12px
+    ),
+    linear-gradient(180deg, #f87171 0%, #dc2626 50%, #991b1b 100%) !important;
+  box-shadow: inset 0 2px 0 rgba(254, 202, 202, 0.55);
 }
 
 #hud-surge-bar {
-  background: linear-gradient(90deg, #92400e 0%, #d97706 55%, #fcd34d 100%) !important;
-  box-shadow: inset 0 1px 0 rgba(254, 249, 195, 0.5);
+  background:
+    repeating-linear-gradient(
+      90deg,
+      transparent 0px,
+      transparent 8px,
+      rgba(5, 7, 12, 0.45) 8px,
+      rgba(5, 7, 12, 0.45) 10px
+    ),
+    linear-gradient(180deg, #fde047 0%, #f59e0b 55%, #b45309 100%) !important;
+  box-shadow: inset 0 1px 0 rgba(254, 249, 195, 0.65);
 }
 
 #boss-hp-bar {
-  background: linear-gradient(90deg, #7f1d1d 0%, #b91c1c 50%, #ef4444 85%, #f59e0b 100%) !important;
-}
-
-
-/* Ornate Forged Bronze Double-Bevel Styling for Constellation [T] & Forge [I] Modals */
-#overlay-tree .glass-panel,
-#overlay-forge .glass-panel {
   background:
-    linear-gradient(180deg, rgba(24, 29, 43, 0.97) 0%, rgba(10, 13, 21, 0.99) 100%);
-  border: 2px solid #9a6728;
-  outline: 1px solid rgba(252, 211, 77, 0.28);
-  outline-offset: -5px;
-  box-shadow:
-    inset 0 1px 0 rgba(254, 240, 138, 0.28),
-    inset 0 -3px 10px rgba(0, 0, 0, 0.92),
-    0 0 0 1px #040508,
-    0 18px 42px rgba(0, 0, 0, 0.88);
+    repeating-linear-gradient(
+      90deg,
+      transparent 0px,
+      transparent 14px,
+      rgba(5, 7, 12, 0.45) 14px,
+      rgba(5, 7, 12, 0.45) 16px
+    ),
+    linear-gradient(180deg, #fb7185 0%, #e11d48 50%, #881337 100%) !important;
 }
 
-#overlay-tree .rounded-2xl,
-#overlay-forge .rounded-2xl,
-#overlay-tree .rounded-xl,
-#overlay-forge .rounded-xl {
-  border-color: rgba(154, 103, 40, 0.58) !important;
-  outline: 1px solid rgba(252, 211, 77, 0.14);
-  outline-offset: -3px;
+/* -------------------------------------------------------------------------
+   4. PIXEL SCROLLBAR & MODAL OVERRIDES
+   ------------------------------------------------------------------------- */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: #06080f;
+  border-left: 2px solid #3b2914;
+}
+::-webkit-scrollbar-thumb {
+  background: #9a6728;
+  border: 1px solid #fef08a;
+}
+
+#overlay-tree .pixel-panel,
+#overlay-forge .pixel-panel {
   box-shadow:
-    inset 0 1px 0 rgba(254, 240, 138, 0.16),
-    inset 0 0 10px rgba(0, 0, 0, 0.78);
+    inset 2px 2px 0px rgba(254, 240, 138, 0.28),
+    inset -2px -2px 0px #020306,
+    0 0 0 2px #020306,
+    6px 6px 0px rgba(0, 0, 0, 0.9);
+}
+/* Title Screen Animated Pixel Canvas & Retro Logo Shadow */
+#title-bg-canvas {
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+}
+
+.title-pixel-logo {
+  text-shadow:
+    3px 3px 0px #060912,
+    -2px -2px 0px #060912,
+    2px -2px 0px #060912,
+    -2px 2px 0px #060912,
+    0px 6px 0px rgba(4, 6, 12, 0.78);
 }
