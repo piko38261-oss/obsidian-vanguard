@@ -1,10 +1,9 @@
 // =========================================================================
-// 9. HD ISOMETRIC PIXEL ART 2.5D RENDERER (OBSIDIAN SWAMP SANCTUM)
-//    + DISTINCT ELEMENTAL FORMS (SOLAR / CRYO / VOLT) & OVERDRIVE WINGS
-//    + VOLT REAPER MAGIC CIRCLE (AUTO WHITE-BG REMOVAL + PROCEDURAL FALLBACK)
+// 9. HD ISOMETRIC PIXEL ART 2.5D RENDERER (MULTI-BIOME SANCTUM)
+//    + 3 REDESIGNED HERO FORMS (SOLAR CHAIN / CRYO ANTLERS / VOLT SCYTHE)
+//    + GROUND CRACK FISSURES + SKY LIGHTNING + 4 BOSS FORMS + REACTION BADGES
 // =========================================================================
 
-// Isometric 2:1 Projection Constants (1 world tile 64x64 -> 64x32 px diamond)
 const ISO_TILE_WORLD = 64;
 const ISO_GRID_W = Math.ceil(ARENA_W / ISO_TILE_WORLD); // 30
 const ISO_GRID_H = Math.ceil(ARENA_H / ISO_TILE_WORLD); // 22
@@ -29,7 +28,6 @@ function isoScreenToWorld(sx, sy, viewW, viewH) {
 window.worldToIso = worldToIso;
 window.isoScreenToWorld = isoScreenToWorld;
 
-// Deterministic pseudo-random helper for stable map decoration
 function tileHash(gx, gy, salt = 0) {
   let n = Math.sin(gx * 127.1 + gy * 311.7 + salt * 74.7) * 43758.5453123;
   return n - Math.floor(n);
@@ -39,7 +37,6 @@ function tileHash(gx, gy, salt = 0) {
 // 9A. PROCEDURAL PIXEL-ART SPRITE CACHE & VOLT MAGIC CIRCLE
 // -------------------------------------------------------------------------
 const pixelSpriteCache = new Map();
-
 let voltSigilCanvas = null;
 
 function buildProceduralVoltSigil() {
@@ -57,7 +54,6 @@ function buildProceduralVoltSigil() {
   g.lineCap = 'round';
   g.lineJoin = 'round';
 
-  // 1. Outer double circles
   g.lineWidth = 5;
   g.beginPath();
   g.arc(0, 0, 236, 0, Math.PI * 2);
@@ -67,7 +63,6 @@ function buildProceduralVoltSigil() {
   g.arc(0, 0, 224, 0, Math.PI * 2);
   g.stroke();
 
-  // 2. Outer arcane rune ring (36 stylized glyphs)
   for (let i = 0; i < 36; i++) {
     const a = (i / 36) * Math.PI * 2;
     g.save();
@@ -76,27 +71,16 @@ function buildProceduralVoltSigil() {
     g.strokeStyle = i % 2 === 0 ? '#d946ef' : '#a855f7';
     g.beginPath();
     if (i % 3 === 0) {
-      g.moveTo(202, -5);
-      g.lineTo(214, -5);
-      g.lineTo(208, 5);
-      g.lineTo(216, 5);
+      g.moveTo(202, -5); g.lineTo(214, -5); g.lineTo(208, 5); g.lineTo(216, 5);
     } else if (i % 3 === 1) {
-      g.moveTo(204, -4);
-      g.lineTo(204, 4);
-      g.moveTo(212, -5);
-      g.lineTo(212, 5);
-      g.moveTo(204, 0);
-      g.lineTo(212, 0);
+      g.moveTo(204, -4); g.lineTo(204, 4); g.moveTo(212, -5); g.lineTo(212, 5); g.moveTo(204, 0); g.lineTo(212, 0);
     } else {
-      g.moveTo(204, -5);
-      g.lineTo(214, 0);
-      g.lineTo(204, 5);
+      g.moveTo(204, -5); g.lineTo(214, 0); g.lineTo(204, 5);
     }
     g.stroke();
     g.restore();
   }
 
-  // 3. Inner concentric borders
   g.strokeStyle = '#c026d3';
   g.lineWidth = 3.5;
   g.beginPath();
@@ -108,7 +92,6 @@ function buildProceduralVoltSigil() {
   g.arc(0, 0, 162, 0, Math.PI * 2);
   g.stroke();
 
-  // 4. Large 6-pointed Hexagram (two interlocking triangles)
   const hexR = 158;
   g.lineWidth = 3.2;
   g.strokeStyle = '#a855f7';
@@ -126,7 +109,6 @@ function buildProceduralVoltSigil() {
     g.stroke();
   }
 
-  // 5. Six outer starbursts in the hexagram gaps
   for (let s = 0; s < 6; s++) {
     const sa = (s * Math.PI) / 3;
     const sx = Math.cos(sa) * 142;
@@ -146,7 +128,6 @@ function buildProceduralVoltSigil() {
     g.restore();
   }
 
-  // 6. Inner circle + 5 diamond tips + 5 orbit dots
   g.strokeStyle = '#d946ef';
   g.lineWidth = 3;
   g.beginPath();
@@ -163,10 +144,7 @@ function buildProceduralVoltSigil() {
     g.rotate(da);
     g.fillStyle = '#e879f9';
     g.beginPath();
-    g.moveTo(106, 0);
-    g.lineTo(121, -7);
-    g.lineTo(136, 0);
-    g.lineTo(121, 7);
+    g.moveTo(106, 0); g.lineTo(121, -7); g.lineTo(136, 0); g.lineTo(121, 7);
     g.closePath();
     g.fill();
     g.restore();
@@ -178,39 +156,24 @@ function buildProceduralVoltSigil() {
     g.fill();
   }
 
-  // 7. Layered curved 5-pointed star core
   const drawCurvedStar = (outerR, innerR, lineW, strokeCol, fillCol) => {
     g.beginPath();
     for (let i = 0; i < 5; i++) {
       const a1 = -Math.PI * 0.5 + (i * Math.PI * 2) / 5;
       const aMid = a1 + Math.PI / 5;
       const a2 = -Math.PI * 0.5 + ((i + 1) * Math.PI * 2) / 5;
-      const x1 = Math.cos(a1) * outerR;
-      const y1 = Math.sin(a1) * outerR;
-      const xm = Math.cos(aMid) * innerR;
-      const ym = Math.sin(aMid) * innerR;
-      const x2 = Math.cos(a2) * outerR;
-      const y2 = Math.sin(a2) * outerR;
-      if (i === 0) g.moveTo(x1, y1);
-      g.quadraticCurveTo(xm, ym, x2, y2);
+      if (i === 0) g.moveTo(Math.cos(a1) * outerR, Math.sin(a1) * outerR);
+      g.quadraticCurveTo(Math.cos(aMid) * innerR, Math.sin(aMid) * innerR, Math.cos(a2) * outerR, Math.sin(a2) * outerR);
     }
     g.closePath();
-    if (fillCol) {
-      g.fillStyle = fillCol;
-      g.fill();
-    }
-    if (strokeCol) {
-      g.strokeStyle = strokeCol;
-      g.lineWidth = lineW;
-      g.stroke();
-    }
+    if (fillCol) { g.fillStyle = fillCol; g.fill(); }
+    if (strokeCol) { g.strokeStyle = strokeCol; g.lineWidth = lineW; g.stroke(); }
   };
 
   drawCurvedStar(104, 46, 5, '#e879f9', 'rgba(168, 85, 247, 0.22)');
   drawCurvedStar(76, 32, 3.5, '#f5d0fe', null);
   drawCurvedStar(48, 18, 2.5, '#ffffff', 'rgba(217, 70, 239, 0.35)');
 
-  // Tiny solid center star
   g.fillStyle = '#ffffff';
   g.beginPath();
   for (let p = 0; p < 10; p++) {
@@ -226,7 +189,6 @@ function buildProceduralVoltSigil() {
 }
 
 function initVoltSigilAsset(imgPath = 'assets/volt-circle.jpg') {
-  // Build procedural fallback immediately so it works even without image file
   voltSigilCanvas = buildProceduralVoltSigil();
 
   const img = new Image();
@@ -240,13 +202,11 @@ function initVoltSigilAsset(imgPath = 'assets/volt-circle.jpg') {
       const g = c.getContext('2d');
       g.drawImage(img, 0, 0, S, S);
 
-      // Strip white JPG background -> transparent glowing neon purple
       const imgData = g.getImageData(0, 0, S, S);
       const d = imgData.data;
       for (let i = 0; i < d.length; i += 4) {
         const r = d[i];
         const gr = d[i + 1];
-        // Purple ink has low Green; white background has high Green (~255)
         const inkStrength = Math.max(0, 255 - gr);
         if (inkStrength < 18) {
           d[i + 3] = 0;
@@ -260,71 +220,75 @@ function initVoltSigilAsset(imgPath = 'assets/volt-circle.jpg') {
       }
       g.putImageData(imgData, 0, 0);
       voltSigilCanvas = c;
-    } catch (_) {
-      // Fallback safely to procedural sigil if opened via file://
-    }
+    } catch (_) {}
   };
   img.src = imgPath;
 }
 initVoltSigilAsset();
 
 const PIXEL_SPRITES = {
-  // [1] SOLAR CLEAVE: Heavy Paladin Knight with Flaming Plume & Reactor Core
+  // ร่าง 1: นักล่าเกราะเพลิงสวมหมวกปีกกว้าง + เสื้อคลุมรูนไฟ (16x18)
   hero_solar: [
-    '.......ff.......',
-    '......fyyf......',
-    '.....kggggk.....',
-    '....kgddddgk....',
-    '....kgdyydgk....',
-    '...kggddddggk...',
-    '.kggkkrrrrkkggk.',
-    'kggkddffffddkggk',
-    'kdgkdfyyyyfdkgdk',
-    '.kkkddffffddkkk.',
-    '....kggddggk....',
-    '....kddrrddk....',
+    '......kkkk......',
+    '.....kddddk.....',
+    '....kddddddk....',
+    '..kkkggggggkkk..',
+    '...kkddffddkk...',
+    '....kddyyddk....',
+    '...kkddffddkk...',
+    '..kggkrrrrkggk..',
+    '.kggkdfyyfdkggk.',
+    '.kddkdffffdkddk.',
+    '.kddkddrrddkddk.',
+    '.kddkggggggkddk.',
+    '.kddkfrrrrfkddk.',
+    '..kdkddddddkdk..',
+    '..k.kdd..ddk.k..',
+    '....kgg..ggk....',
     '....kdd..ddk....',
-    '...kggk..kggk...',
+    '....kkk..kkk....',
+  ],
+  // ร่าง 2: นักรบเหมันต์เขากวาง + ผ้าพันคอและผ้ายันต์รอบเอว (16x18)
+  hero_cryo: [
+    '.k...k....k...k.',
+    '..k.kk....kk.k..',
+    '...kk.kkkk.kk...',
+    '....kkddddkk....',
+    '....kdwddwdk....',
+    '...kcccccccck...',
+    '..kciwiwwiwcik..',
+    '..kcddggggddck..',
+    '.kccddccccddcck.',
+    '.kcwddddddddwck.',
+    '.kcwddggggddwck.',
+    '.kccddddddddcck.',
+    '..kcwcrcwcrcwk..',
+    '..kcwcrcwcrcwk..',
+    '...kcck..kcck...',
     '...kddk..kddk...',
+    '...kiik..kiik...',
     '...kkkk..kkkk...',
   ],
-  // [2] CRYO LANCE: Frost Sovereign with 3-Point Ice Crown & Glacial Mantle
-  hero_cryo: [
-    '...c...cc...c...',
-    '...ic.ciic.ci...',
-    '....kcccccck....',
-    '....kddddddk....',
-    '....kdwccwdk....',
-    '...kkiiiiiikk...',
-    '..ckkddccddkkc..',
-    '.ciikddwwddkiic.',
-    '..ckkddccddkkc..',
-    '...kkddddddkk...',
-    '...kciicciick...',
-    '...kddicciddk...',
-    '..kddi.cc.iddk..',
-    '..kddk....kddk..',
-    '..kiik....kiik..',
-    '..kkkk....kkkk..',
-  ],
-  // [3] VOLT REAPER: Hooded Cyber-Assassin with Neon Eyes & Agile Stance
+  // ร่าง 3: ยมทูตนักฆ่าสวมฮู้ดดำ ตาเรืองแสง + ออร่าเปลวไฟม่วง (16x18)
   hero_volt: [
-    '......kkkk......',
-    '.....kppppk.....',
-    '....kppddppk....',
-    '...kppddddppk...',
-    '...kpdvddvdpk...',
-    '...kppddddppk...',
-    '..kvvkkvvkkvvk..',
-    '.kvdkkppppkkdvk.',
-    '.k.kkppvvppkk.k.',
-    '....kppggppk....',
-    '...kppddddppk...',
-    '..kppd.vv.dppk..',
-    '..kppk....kppk..',
-    '..kddk....kddk..',
-    '.kvvk......kvvk.',
-    '.kkkk......kkkk.',
+    '......vvvv......',
+    '.....vvkkvv.....',
+    '....vkkddkkv....',
+    '...vkddkkddkv...',
+    '...vkdkvvdkkv...',
+    '...vkddkkddkv...',
+    '..vvkkddddkkvv..',
+    '.vvkkddddddkkvv.',
+    '.vkkdddvvdddkkv.',
+    '.vkkddddddddkkv.',
+    '.kkddddvvddddkk.',
+    '..kddddddddddk..',
+    '..kddddddddddk..',
+    '...kddddddddk...',
+    '...kkk.vv.kkk...',
+    '....kv....vk....',
+    '....kv....vk....',
+    '....kk....kk....',
   ],
   husk: [
     '...k....k...',
@@ -383,7 +347,7 @@ const PIXEL_SPRITES = {
     '...kv..vk...',
     '..kk....kk..',
   ],
-  boss: [
+  boss_overlord: [
     '....kk........kk....',
     '...kggk..kk..kggk...',
     '..kggddkkggkkddggk..',
@@ -400,6 +364,60 @@ const PIXEL_SPRITES = {
     '.....kddk..kddk.....',
     '....kdddk..kdddk....',
     '....kkkkk..kkkkk....',
+  ],
+  boss_wyrm: [
+    'k..................k',
+    'kgk.....kkkk.....kgk',
+    'kggk...kggggk...kggk',
+    '.kddk.kgddddgk.kddk.',
+    '.kdddkgdcddcdgkdddk.',
+    '..kdddgddddddgdddk..',
+    '..kdddddvvvvdddddk..',
+    '...kddddgvvgddddk...',
+    '..kggddddggddddggk..',
+    '.kggddkddddddkddggk.',
+    'kggk..kddggddk..kggk',
+    '.kk...kddccddk...kk.',
+    '......kddddddk......',
+    '.....kddk..kddk.....',
+    '....kggk....kggk....',
+    '....kkk......kkk....',
+  ],
+  boss_lich: [
+    '......k.kkkk.k......',
+    '.....kggkggkggk.....',
+    '......kddddddk......',
+    '.....kddvvvvddk.....',
+    '.....kdvcvvcvdk.....',
+    '.....kddvvvvddk.....',
+    '....kkddddddddkk....',
+    '...kggkddddddkggk...',
+    '..kggk.kddggk.kggk..',
+    '..kdk..kdgcck..kdk..',
+    '..kk..kddggddk..kk..',
+    '.....kddddddddk.....',
+    '....kdddkddkdddk....',
+    '...kddk.kddk.kddk...',
+    '...kkk...kk...kkk...',
+    '....................',
+  ],
+  boss_golem: [
+    '..kkkk........kkkk..',
+    '.kggggk.kkkk.kggggk.',
+    'kggddggkddddkggddggk',
+    'kdddddddvvvvdddddddk',
+    'kddggddvccccvddggddk',
+    'kdddddddvvvvdddddddk',
+    'kddddddddddddddddddk',
+    '.kddkkddggggddkkddk.',
+    '.kddk.kdgccgdk.kddk.',
+    '.kddk.kddggddk.kddk.',
+    '..kk..kddddddk..kk..',
+    '.....kddd..dddk.....',
+    '....kdddk..kdddk....',
+    '....kgggk..kgggk....',
+    '...kddddk..kddddk...',
+    '...kkkkkk..kkkkkk...',
   ],
 };
 
@@ -431,20 +449,18 @@ function getCachedPixelSprite(cacheKey, grid, palette, px = 3, flipX = false, fl
 }
 
 // -------------------------------------------------------------------------
-// 9B. BAKED ISOMETRIC PIXEL-ART TERRAIN MAP (SWAMP + RUINS + LAVA GATE)
+// 9B. BAKED MULTI-BIOME ISOMETRIC PIXEL-ART TERRAIN MAP
 // -------------------------------------------------------------------------
 let isoMapCanvas = null;
 let isoMapOriginX = 0;
 let isoMapOriginY = 0;
 const isoWaterProps = [];
 
-// Draw a chunky 2:1 isometric pixel block with crisp 2px pixel steps
 function drawIsoPixelBlock(c, cx, cy, heightPx, colors, style = 'stone', seed = 0) {
-  const hw = 32; // half-width
-  const hh = 16; // half-height
+  const hw = 32;
+  const hh = 16;
   const topY = cy - heightPx;
 
-  // 1. Left face (lit side)
   c.fillStyle = colors.left;
   c.beginPath();
   c.moveTo(cx - hw, topY + hh);
@@ -454,7 +470,6 @@ function drawIsoPixelBlock(c, cx, cy, heightPx, colors, style = 'stone', seed = 
   c.closePath();
   c.fill();
 
-  // 2. Right face (shadowed side)
   c.fillStyle = colors.right;
   c.beginPath();
   c.moveTo(cx + hw, topY + hh);
@@ -464,7 +479,6 @@ function drawIsoPixelBlock(c, cx, cy, heightPx, colors, style = 'stone', seed = 
   c.closePath();
   c.fill();
 
-  // Brick/dirt vertical pixel texture on side faces
   if (heightPx >= 10) {
     c.fillStyle = 'rgba(0,0,0,0.22)';
     for (let y = 6; y < heightPx - 2; y += 8) {
@@ -475,7 +489,6 @@ function drawIsoPixelBlock(c, cx, cy, heightPx, colors, style = 'stone', seed = 
     }
   }
 
-  // Cyber-Gothic glowing gold runes on tall ruin walls
   if (style === 'rune_wall' && heightPx >= 36) {
     c.fillStyle = '#ff9800';
     const rx = Math.round(cx - 18);
@@ -488,25 +501,23 @@ function drawIsoPixelBlock(c, cx, cy, heightPx, colors, style = 'stone', seed = 
     c.fillRect(rx + 6, ry + 14, 2, 4);
   }
 
-  // Overhanging pixel grass tufts on grass blocks
   if (style === 'grass') {
     c.fillStyle = colors.overhangLeft || '#4d8b31';
     for (let i = 0; i < 6; i++) {
       const ox = cx - hw + 2 + i * 5;
       const oy = topY + hh + Math.floor(i * 2.5);
-      const drop = 4 + Math.floor(((seed * 17 + i * 7) % 5));
+      const drop = 4 + Math.floor((seed * 17 + i * 7) % 5);
       c.fillRect(Math.round(ox), Math.round(oy), 4, drop);
     }
     c.fillStyle = colors.overhangRight || '#356622';
     for (let i = 0; i < 6; i++) {
       const ox = cx + 2 + i * 5;
       const oy = topY + hh * 2 - 2 - Math.floor(i * 2.5);
-      const drop = 4 + Math.floor(((seed * 23 + i * 5) % 5));
+      const drop = 4 + Math.floor((seed * 23 + i * 5) % 5);
       c.fillRect(Math.round(ox), Math.round(oy), 4, drop);
     }
   }
 
-  // 3. Top diamond face
   c.fillStyle = colors.top;
   c.beginPath();
   c.moveTo(cx, topY);
@@ -516,7 +527,6 @@ function drawIsoPixelBlock(c, cx, cy, heightPx, colors, style = 'stone', seed = 
   c.closePath();
   c.fill();
 
-  // Top-face pixel bevel highlight (upper-left edges)
   c.strokeStyle = colors.highlight || 'rgba(255,255,255,0.14)';
   c.lineWidth = 2;
   c.beginPath();
@@ -525,7 +535,6 @@ function drawIsoPixelBlock(c, cx, cy, heightPx, colors, style = 'stone', seed = 
   c.lineTo(cx + hw - 2, topY + hh);
   c.stroke();
 
-  // Crisp pixel outline along seam
   c.strokeStyle = 'rgba(4, 7, 12, 0.52)';
   c.lineWidth = 1;
   c.beginPath();
@@ -536,7 +545,6 @@ function drawIsoPixelBlock(c, cx, cy, heightPx, colors, style = 'stone', seed = 
   c.closePath();
   c.stroke();
 
-  // Pixel surface detail (blades of grass, cracked brick joints, pebbles, runes)
   if (style === 'grass') {
     const blades = 5 + Math.floor(seed * 4);
     for (let b = 0; b < blades; b++) {
@@ -544,7 +552,7 @@ function drawIsoPixelBlock(c, cx, cy, heightPx, colors, style = 'stone', seed = 
       const h2 = tileHash(cx, cy + b, 2);
       const bx = cx + (h1 - 0.5) * 34;
       const by = topY + hh + (h2 - 0.5) * 14;
-      c.fillStyle = b % 2 === 0 ? '#a3e635' : '#4d7c0f';
+      c.fillStyle = b % 2 === 0 ? (colors.highlight || '#a3e635') : (colors.overhangRight || '#4d7c0f');
       c.fillRect(Math.round(bx), Math.round(by), 2, 4);
       c.fillRect(Math.round(bx + 2), Math.round(by + 2), 2, 2);
     }
@@ -567,7 +575,7 @@ function drawIsoPixelBlock(c, cx, cy, heightPx, colors, style = 'stone', seed = 
     for (let d = 0; d < 4; d++) {
       const dx = cx + (tileHash(cx + d, cy, 3) - 0.5) * 30;
       const dy = topY + hh + (tileHash(cx, cy + d, 4) - 0.5) * 12;
-      c.fillStyle = d % 2 === 0 ? '#5c3c28' : '#9c6e4e';
+      c.fillStyle = d % 2 === 0 ? colors.right : colors.highlight;
       c.fillRect(Math.round(dx), Math.round(dy), 4, 2);
     }
   } else if (style === 'vent') {
@@ -582,7 +590,7 @@ function drawIsoPixelBlock(c, cx, cy, heightPx, colors, style = 'stone', seed = 
   }
 }
 
-function buildIsometricPixelMap() {
+function buildIsometricPixelMap(biomeIdx = 0) {
   const minGx = -ISO_BORDER;
   const maxGx = ISO_GRID_W + ISO_BORDER - 1;
   const minGy = -ISO_BORDER;
@@ -601,7 +609,10 @@ function buildIsometricPixelMap() {
   isoMapOriginY = Math.floor(ISO_BORDER * 32 + 180);
   isoWaterProps.length = 0;
 
-  const PAL = {
+  const biome = (typeof ROOM_BIOMES !== 'undefined' && ROOM_BIOMES[biomeIdx % ROOM_BIOMES.length])
+    ? ROOM_BIOMES[biomeIdx % ROOM_BIOMES.length]
+    : null;
+  const PAL = biome ? biome.pal : {
     ruin: { top: '#244b55', left: '#17343c', right: '#0d2026', highlight: 'rgba(125,211,252,0.22)' },
     ruinDark: { top: '#1c3b44', left: '#122830', right: '#09171d', highlight: 'rgba(94,234,212,0.16)' },
     stone: { top: '#2b3944', left: '#1c2630', right: '#111820', highlight: 'rgba(203,213,225,0.14)' },
@@ -621,12 +632,12 @@ function buildIsometricPixelMap() {
     THERMAL_VENTS.map((v) => `${Math.floor(v.x / ISO_TILE_WORLD)},${Math.floor(v.y / ISO_TILE_WORLD)}`)
   );
 
-  // PASS 1: Submerged swamp floor blocks (drawn under translucent water layer)
+  // PASS 1: Submerged outer blocks
   for (let gy = minGy; gy <= maxGy; gy++) {
     for (let gx = minGx; gx <= maxGx; gx++) {
       const isSwamp = gx >= ISO_GRID_W || gy >= ISO_GRID_H;
       if (!isSwamp) continue;
-      const h = tileHash(gx, gy, 11);
+      const h = tileHash(gx, gy, 11 + biomeIdx * 7);
       if (gx > ISO_GRID_W + 2 && gy > ISO_GRID_H + 2 && h > 0.55) continue;
 
       const iso = worldToIso(gx * ISO_TILE_WORLD, gy * ISO_TILE_WORLD, 0);
@@ -646,7 +657,7 @@ function buildIsometricPixelMap() {
     }
   }
 
-  // PASS 2: Translucent Isometric Swamp Water Plane covering outer wetland edges
+  // PASS 2: Translucent Water / Lava / Ice Plane
   mctx.save();
   const drawWaterQuad = (x0, y0, x1, y1) => {
     const p0 = worldToIso(x0 * ISO_TILE_WORLD, y0 * ISO_TILE_WORLD, 0);
@@ -659,9 +670,9 @@ function buildIsometricPixelMap() {
     mctx.lineTo(isoMapOriginX + p2.x, isoMapOriginY + p2.y + 8);
     mctx.lineTo(isoMapOriginX + p3.x, isoMapOriginY + p3.y + 8);
     mctx.closePath();
-    mctx.fillStyle = 'rgba(34, 96, 108, 0.56)';
+    mctx.fillStyle = biome ? biome.waterCol : 'rgba(34, 96, 108, 0.56)';
     mctx.fill();
-    mctx.strokeStyle = 'rgba(125, 225, 220, 0.28)';
+    mctx.strokeStyle = biome ? biome.waterEdge : 'rgba(125, 225, 220, 0.28)';
     mctx.lineWidth = 2;
     mctx.stroke();
   };
@@ -669,10 +680,10 @@ function buildIsometricPixelMap() {
   drawWaterQuad(ISO_GRID_W, minGy, maxGx + 1, ISO_GRID_H);
   mctx.restore();
 
-  // PASS 3: Playable Arena Blocks + Raised Gothic Ruin Fortress Walls (Back-to-Front)
+  // PASS 3: Playable Arena Blocks + Raised Fortress Walls & Northern Tunnel Archway
   for (let gy = minGy; gy < ISO_GRID_H; gy++) {
     for (let gx = minGx; gx < ISO_GRID_W; gx++) {
-      const h = tileHash(gx, gy, 5);
+      const h = tileHash(gx, gy, 5 + biomeIdx * 13);
       const iso = worldToIso(gx * ISO_TILE_WORLD, gy * ISO_TILE_WORLD, 0);
       const cx = isoMapOriginX + iso.x;
       const cy = isoMapOriginY + iso.y;
@@ -716,7 +727,6 @@ function buildIsometricPixelMap() {
         continue;
       }
 
-      // Playable Arena Ground Tiles (gx: 0..29, gy: 0..21)
       const tileKey = `${gx},${gy}`;
       const distCenter = Math.hypot(gx - ISO_GRID_W * 0.5, gy - ISO_GRID_H * 0.5);
       const nearSouthEdge = gx >= ISO_GRID_W - 2 || gy >= ISO_GRID_H - 2;
@@ -732,23 +742,17 @@ function buildIsometricPixelMap() {
       } else if (nearBackEdge) {
         drawIsoPixelBlock(mctx, cx, cy, 19, h > 0.65 ? PAL.grass : PAL.ruin, h > 0.65 ? 'grass' : 'ruin', h);
       } else {
-        if (h < 0.42) {
-          drawIsoPixelBlock(mctx, cx, cy, 18, PAL.stone, 'stone', h);
-        } else if (h < 0.72) {
-          drawIsoPixelBlock(mctx, cx, cy, 18, PAL.dirt, 'dirt', h);
-        } else if (h < 0.88) {
-          drawIsoPixelBlock(mctx, cx, cy, 18, PAL.ruinDark, 'ruin', h);
-        } else {
-          drawIsoPixelBlock(mctx, cx, cy, 19, PAL.grass, 'grass', h);
-        }
+        if (h < 0.42) drawIsoPixelBlock(mctx, cx, cy, 18, PAL.stone, 'stone', h);
+        else if (h < 0.72) drawIsoPixelBlock(mctx, cx, cy, 18, PAL.dirt, 'dirt', h);
+        else if (h < 0.88) drawIsoPixelBlock(mctx, cx, cy, 18, PAL.ruinDark, 'ruin', h);
+        else drawIsoPixelBlock(mctx, cx, cy, 19, PAL.grass, 'grass', h);
       }
     }
   }
 }
 
-// Keep compatibility if config.js calls this name
 function buildProceduralFloorPattern() {
-  buildIsometricPixelMap();
+  buildIsometricPixelMap(gameState.biomeIndex || 0);
 }
 
 // -------------------------------------------------------------------------
@@ -780,7 +784,6 @@ function renderDynamicLightmap(viewW, viewH, originX, originY) {
 
   lightCtx.globalCompositeOperation = 'lighter';
 
-  // Brazier Pillar Warm Lights
   for (let i = 0; i < PILLARS.length; i++) {
     const pil = PILLARS[i];
     const pos = worldToIso(pil.x, pil.y, 44);
@@ -792,7 +795,6 @@ function renderDynamicLightmap(viewW, viewH, originX, originY) {
     ]);
   }
 
-  // Thermal Vent Glow
   for (let v = 0; v < THERMAL_VENTS.length; v++) {
     const vent = THERMAL_VENTS[v];
     const pos = worldToIso(vent.x, vent.y, 0);
@@ -802,13 +804,21 @@ function renderDynamicLightmap(viewW, viewH, originX, originY) {
     ]);
   }
 
-  // Hero & Aspect Blade Glow
+  if (gameState.portalOpen) {
+    const gPos = worldToIso(TUNNEL_GATE.x, TUNNEL_GATE.y, 16);
+    drawPointLight(lightCtx, originX + gPos.x, originY + gPos.y, 240, [
+      [0, 'rgba(120, 245, 255, 0.95)'],
+      [0.5, 'rgba(168, 85, 247, 0.45)'],
+      [1, 'rgba(0, 0, 0, 0)'],
+    ]);
+  }
+
   const p = gameState.player;
   if (p) {
     const pos = worldToIso(p.x, p.y, 18);
     const isGold = p.surgeTimer > 0;
     const aspKey = p.weaponAspect || 'solar';
-    const isVoltBurst = aspKey === 'volt' && (p.transformAnimTimer || 0) > 0;
+    const isTransformBurst = (p.transformAnimTimer || 0) > 0;
     const inner = isGold
       ? 'rgba(255, 235, 150, 0.95)'
       : aspKey === 'cryo'
@@ -823,14 +833,13 @@ function renderDynamicLightmap(viewW, viewH, originX, originY) {
       : aspKey === 'volt'
       ? 'rgba(192, 132, 252, 0.42)'
       : 'rgba(255, 120, 35, 0.30)';
-    drawPointLight(lightCtx, originX + pos.x, originY + pos.y, isGold || isVoltBurst ? 340 : 260, [
+    drawPointLight(lightCtx, originX + pos.x, originY + pos.y, isGold || isTransformBurst ? 350 : 260, [
       [0, inner],
       [0.5, outer],
       [1, 'rgba(0, 0, 0, 0)'],
     ]);
   }
 
-  // Boss Light
   if (gameState.boss && gameState.boss.hp > 0) {
     const b = gameState.boss;
     const pos = worldToIso(b.x, b.y, 26);
@@ -840,7 +849,6 @@ function renderDynamicLightmap(viewW, viewH, originX, originY) {
     ]);
   }
 
-  // Shockwave Light Bursts
   for (let i = 0; i < gameState.shockwaves.length; i++) {
     const sw = gameState.shockwaves[i];
     const pos = worldToIso(sw.x, sw.y, 8);
@@ -854,7 +862,7 @@ function renderDynamicLightmap(viewW, viewH, originX, originY) {
 }
 
 // -------------------------------------------------------------------------
-// 9D. ENTITY PIXEL-ART DRAWERS (PILLARS, HERO FORMS, ENEMIES, BOSS)
+// 9D. ENTITY PIXEL-ART DRAWERS (PILLARS, HERO FORMS, ELEMENTAL ENEMIES & BOSS)
 // -------------------------------------------------------------------------
 function drawPixelShadow(c, sx, sy, rx, ry) {
   c.fillStyle = 'rgba(4, 7, 14, 0.52)';
@@ -876,7 +884,6 @@ function drawIsoPillar(c, pil, sx, sy) {
     pil.phase
   );
 
-  // Brazier bronze bowl on top
   const topY = Math.round(sy - 46);
   c.fillStyle = '#1e1b18';
   c.fillRect(Math.round(sx - 14), topY - 4, 28, 8);
@@ -885,7 +892,6 @@ function drawIsoPillar(c, pil, sx, sy) {
   c.fillStyle = '#fbbf24';
   c.fillRect(Math.round(sx - 12), topY - 6, 24, 2);
 
-  // Animated pixel fire
   const f = Math.sin(gameState.worldTime * 14 + pil.phase);
   const f2 = Math.cos(gameState.worldTime * 19 + pil.phase);
   const flameH = 14 + Math.round(f * 4);
@@ -916,49 +922,49 @@ function drawIsoHero(c, p, sx, sy) {
     ? Math.abs(Math.sin(t * (aspKey === 'volt' ? 18 : 14))) * (aspKey === 'volt' ? 5 : 4)
     : Math.sin(t * (aspKey === 'cryo' ? 3 : 4.5)) * (aspKey === 'cryo' ? 2.5 : 1.5);
 
-  drawPixelShadow(c, sx, sy + 2, aspKey === 'solar' ? 21 : 18, 9);
+  drawPixelShadow(c, sx, sy + 2, aspKey === 'solar' ? 22 : 19, 10);
 
-  // 1. UNDER-FOOT ELEMENTAL AURA (UNIQUE PER FORM)
+  // 1. UNDER-FOOT ELEMENTAL AURA
   c.save();
   if (aspKey === 'solar') {
-    const pulse = 22 + Math.sin(t * 7) * 2;
-    c.strokeStyle = isOverdrive ? 'rgba(254, 240, 138, 0.78)' : 'rgba(255, 106, 0, 0.55)';
-    c.lineWidth = 2;
+    const pulse = 24 + Math.sin(t * 7) * 2.5;
+    c.strokeStyle = isOverdrive ? 'rgba(254, 240, 138, 0.85)' : 'rgba(255, 106, 0, 0.65)';
+    c.lineWidth = 2.5;
     c.beginPath();
     c.ellipse(Math.round(sx), Math.round(sy + 1), pulse, pulse * 0.5, 0, 0, Math.PI * 2);
     c.stroke();
-    for (let f = 0; f < 4; f++) {
-      const fa = t * 2.4 + f * (Math.PI * 0.5);
-      const fx = Math.round(sx + Math.cos(fa) * 20);
-      const fy = Math.round(sy + Math.sin(fa) * 10 - ((t * 28 + f * 9) % 14));
-      c.fillStyle = f % 2 === 0 ? '#fbbf24' : '#f97316';
-      c.fillRect(fx - 1, fy - 2, 3, 4);
+    for (let f = 0; f < 6; f++) {
+      const fa = t * 2.6 + f * (Math.PI / 3);
+      const fx = Math.round(sx + Math.cos(fa) * 22);
+      const fy = Math.round(sy - 4 + Math.sin(fa) * 10 - ((t * 36 + f * 9) % 24));
+      c.fillStyle = f % 2 === 0 ? '#fbbf24' : '#ff6a00';
+      c.fillRect(fx - 2, fy - 3, 4, 5);
     }
   } else if (aspKey === 'cryo') {
     c.translate(Math.round(sx), Math.round(sy + 1));
     c.scale(1, 0.5);
     c.rotate(t * 0.9);
-    c.strokeStyle = 'rgba(103, 232, 249, 0.62)';
+    c.strokeStyle = 'rgba(103, 232, 249, 0.68)';
     c.lineWidth = 2;
     for (let arm = 0; arm < 3; arm++) {
       const a = (arm * Math.PI) / 3;
       c.beginPath();
-      c.moveTo(Math.cos(a) * -26, Math.sin(a) * -26);
-      c.lineTo(Math.cos(a) * 26, Math.sin(a) * 26);
+      c.moveTo(Math.cos(a) * -28, Math.sin(a) * -28);
+      c.lineTo(Math.cos(a) * 28, Math.sin(a) * 28);
       c.stroke();
     }
     c.beginPath();
-    c.arc(0, 0, 17, 0, Math.PI * 2);
+    c.arc(0, 0, 18, 0, Math.PI * 2);
     c.stroke();
   } else if (aspKey === 'volt') {
-    c.strokeStyle = 'rgba(192, 132, 252, 0.65)';
-    c.lineWidth = 2;
+    c.strokeStyle = 'rgba(217, 70, 239, 0.72)';
+    c.lineWidth = 2.2;
     c.beginPath();
-    for (let seg = 0; seg <= 10; seg++) {
-      const a = (seg / 10) * Math.PI * 2 + t * 4;
-      const jit = (seg % 2 === 0 ? 1 : -1) * 3;
-      const vx = sx + Math.cos(a) * (22 + jit);
-      const vy = sy + 1 + Math.sin(a) * (11 + jit * 0.5);
+    for (let seg = 0; seg <= 12; seg++) {
+      const a = (seg / 12) * Math.PI * 2 + t * 4.5;
+      const jit = (seg % 2 === 0 ? 1 : -1) * 3.5;
+      const vx = sx + Math.cos(a) * (24 + jit);
+      const vy = sy + 1 + Math.sin(a) * (12 + jit * 0.5);
       if (seg === 0) c.moveTo(vx, vy);
       else c.lineTo(vx, vy);
     }
@@ -967,37 +973,43 @@ function drawIsoHero(c, p, sx, sy) {
   }
   c.restore();
 
-  // 2. DISTINCT CAPE / CLOAK / BACK ENERGY TRAIL
+  // 2. FLOWING ASSASSIN CLOAK / TALISMAN RIBBONS / FIRE MANTLE
   if (p.scarf && p.scarf.length > 1) {
     const heroIso = worldToIso(p.x, p.y, 0);
     const ox = sx - heroIso.x;
     const oy = sy - heroIso.y;
     for (let s = p.scarf.length - 1; s >= 1; s--) {
-      const a = worldToIso(p.scarf[s - 1].x, p.scarf[s - 1].y, 22 - s * 1.6);
-      const b = worldToIso(p.scarf[s].x, p.scarf[s].y, 20 - s * 1.6);
+      const a = worldToIso(p.scarf[s - 1].x, p.scarf[s - 1].y, 24 - s * 1.6);
+      const b = worldToIso(p.scarf[s].x, p.scarf[s].y, 22 - s * 1.6);
       if (aspKey === 'volt') {
-        c.strokeStyle = s % 2 === 0 ? '#581c87' : '#3b0764';
-        c.lineWidth = Math.max(6, 16 - s * 1.6);
+        c.strokeStyle = '#090612';
+        c.lineWidth = Math.max(9, 20 - s * 1.8);
         c.beginPath();
         c.moveTo(Math.round(ox + a.x), Math.round(oy + a.y));
         c.lineTo(Math.round(ox + b.x), Math.round(oy + b.y));
         c.stroke();
-        c.strokeStyle = '#e879f9';
-        c.lineWidth = 2;
+        c.strokeStyle = '#d946ef';
+        c.lineWidth = 2.2;
         c.beginPath();
-        c.moveTo(Math.round(ox + a.x), Math.round(oy + a.y - 3));
-        c.lineTo(Math.round(ox + b.x), Math.round(oy + b.y - 3));
+        c.moveTo(Math.round(ox + a.x), Math.round(oy + a.y - 4));
+        c.lineTo(Math.round(ox + b.x), Math.round(oy + b.y - 4));
         c.stroke();
       } else if (aspKey === 'cryo') {
-        c.strokeStyle = s % 2 === 0 ? 'rgba(56, 189, 248, 0.72)' : 'rgba(224, 242, 254, 0.55)';
-        c.lineWidth = Math.max(3, 9 - s);
+        c.strokeStyle = s % 2 === 0 ? '#22d3ee' : '#e0f2fe';
+        c.lineWidth = Math.max(3, 8 - s);
         c.beginPath();
-        c.moveTo(Math.round(ox + a.x), Math.round(oy + a.y));
-        c.lineTo(Math.round(ox + b.x), Math.round(oy + b.y));
+        c.moveTo(Math.round(ox + a.x), Math.round(oy + a.y - 2));
+        c.lineTo(Math.round(ox + b.x), Math.round(oy + b.y - 2));
+        c.stroke();
+        c.strokeStyle = '#f43f5e';
+        c.lineWidth = 2;
+        c.beginPath();
+        c.moveTo(Math.round(ox + a.x), Math.round(oy + a.y + 4));
+        c.lineTo(Math.round(ox + b.x), Math.round(oy + b.y + 4));
         c.stroke();
       } else {
-        c.strokeStyle = s % 2 === 0 ? '#dc2626' : '#f97316';
-        c.lineWidth = Math.max(4, 11 - s * 1.2);
+        c.strokeStyle = s % 2 === 0 ? '#dc2626' : '#ff6a00';
+        c.lineWidth = Math.max(5, 13 - s * 1.3);
         c.beginPath();
         c.moveTo(Math.round(ox + a.x), Math.round(oy + a.y));
         c.lineTo(Math.round(ox + b.x), Math.round(oy + b.y));
@@ -1006,57 +1018,71 @@ function drawIsoHero(c, p, sx, sy) {
     }
   }
 
-  // 3. BACK ATTACHMENTS (VOLT LIGHTNING WINGS / OVERDRIVE GOLDEN WINGS)
+  // 3. BACK ATTACHMENTS (SOLAR CHAIN / VOLT FLAME AURA / OVERDRIVE WINGS)
   if (isOverdrive) {
     const flap = Math.sin(t * 14) * 5;
     for (let side = -1; side <= 1; side += 2) {
       c.fillStyle = '#f59e0b';
-      c.fillRect(Math.round(sx + side * 12 - (side < 0 ? 18 : 0)), Math.round(sy - 36 - bob + flap), 18, 6);
-      c.fillRect(Math.round(sx + side * 16 - (side < 0 ? 16 : 0)), Math.round(sy - 42 - bob + flap * 1.3), 16, 5);
+      c.fillRect(Math.round(sx + side * 12 - (side < 0 ? 18 : 0)), Math.round(sy - 38 - bob + flap), 18, 6);
+      c.fillRect(Math.round(sx + side * 16 - (side < 0 ? 16 : 0)), Math.round(sy - 44 - bob + flap * 1.3), 16, 5);
       c.fillStyle = '#fef08a';
-      c.fillRect(Math.round(sx + side * 10 - (side < 0 ? 14 : 0)), Math.round(sy - 34 - bob + flap), 14, 3);
+      c.fillRect(Math.round(sx + side * 10 - (side < 0 ? 14 : 0)), Math.round(sy - 36 - bob + flap), 14, 3);
+    }
+  } else if (aspKey === 'solar') {
+    const dirSide = flipX ? 1 : -1;
+    const sway = Math.sin(t * 6.5) * 4;
+    const rodX = Math.round(sx + dirSide * 18);
+    const rodY = Math.round(sy - 44 - bob);
+    c.strokeStyle = '#18181b';
+    c.lineWidth = 3;
+    c.beginPath();
+    c.moveTo(Math.round(sx), Math.round(sy - 26 - bob));
+    c.lineTo(rodX, rodY);
+    c.stroke();
+    for (let ch = 0; ch < 5; ch++) {
+      const cx = Math.round(rodX + sway * (ch / 4));
+      const cy = rodY + ch * 5;
+      c.fillStyle = '#090b10';
+      c.fillRect(cx - 2, cy, 4, 4);
+      c.fillStyle = ch % 2 === 0 ? '#f97316' : '#64748b';
+      c.fillRect(cx - 1, cy + 1, 2, 2);
     }
   } else if (aspKey === 'volt') {
-    const snap = Math.sin(t * 22) * 3;
-    for (let side = -1; side <= 1; side += 2) {
-      c.strokeStyle = '#c084fc';
-      c.lineWidth = 3;
-      c.beginPath();
-      c.moveTo(Math.round(sx + side * 6), Math.round(sy - 26 - bob));
-      c.lineTo(Math.round(sx + side * 20), Math.round(sy - 34 - bob + snap));
-      c.lineTo(Math.round(sx + side * 15), Math.round(sy - 39 - bob));
-      c.lineTo(Math.round(sx + side * 27), Math.round(sy - 44 - bob - snap));
-      c.stroke();
+    for (let vf = 0; vf < 7; vf++) {
+      const fx = Math.round(sx + Math.sin(t * 9 + vf * 1.7) * 14);
+      const fy = Math.round(sy - 38 - bob - ((t * 38 + vf * 7) % 20));
+      c.fillStyle = vf % 2 === 0 ? '#e879f9' : '#a855f7';
+      c.fillRect(fx - 2, fy - 2, 4, 4);
     }
   }
 
-  // 4. FORM-SPECIFIC PIXEL ART SPRITE (SOLAR / CRYO / VOLT)
+  // 4. FORM-SPECIFIC PIXEL SPRITE (16x18)
   let grid = PIXEL_SPRITES.hero_solar;
   let palette;
   if (aspKey === 'cryo') {
     grid = PIXEL_SPRITES.hero_cryo;
     palette = {
       k: '#060a12',
-      c: isOverdrive ? '#fde047' : '#22d3ee',
-      i: '#7dd3fc',
-      d: p.invulnTimer > 0 ? '#0ea5e9' : '#1e3a5f',
-      w: '#f0f9ff',
+      c: isOverdrive ? '#fde047' : '#0d9488',
+      i: '#67e8f9',
+      d: p.invulnTimer > 0 ? '#0ea5e9' : '#1e293b',
+      w: '#f8fafc',
+      r: '#ef4444',
+      g: '#fbbf24',
     };
   } else if (aspKey === 'volt') {
     grid = PIXEL_SPRITES.hero_volt;
     palette = {
-      k: '#07050f',
-      p: p.invulnTimer > 0 ? '#6d28d9' : '#2e1065',
-      d: '#130b24',
+      k: '#06040c',
+      d: p.invulnTimer > 0 ? '#581c87' : '#141124',
       v: isOverdrive ? '#fde047' : '#e879f9',
-      g: '#fbbf24',
     };
   } else {
     grid = PIXEL_SPRITES.hero_solar;
     palette = {
       k: '#090b10',
-      g: isOverdrive ? '#fef08a' : '#d99b26',
-      d: p.invulnTimer > 0 ? '#0891b2' : '#232c3d',
+      g: isOverdrive ? '#fef08a' : '#f59e0b',
+      d: p.invulnTimer > 0 ? '#0891b2' : '#1f2937',
       f: '#ff6a00',
       y: '#fef08a',
       r: '#dc2626',
@@ -1064,7 +1090,7 @@ function drawIsoHero(c, p, sx, sy) {
   }
 
   const spr = getCachedPixelSprite(
-    `hero_${aspKey}_${isOverdrive ? 1 : 0}_${p.invulnTimer > 0 ? 1 : 0}`,
+    `hero2_${aspKey}_${isOverdrive ? 1 : 0}_${p.invulnTimer > 0 ? 1 : 0}`,
     grid,
     palette,
     3,
@@ -1073,12 +1099,27 @@ function drawIsoHero(c, p, sx, sy) {
   );
   c.drawImage(spr, Math.round(sx - spr.width * 0.5), Math.round(sy - spr.height + 5 - bob));
 
-  // Cryo Form [2]: 3 Orbiting Floating Ice Crystals around Hero
+  // เครื่องประดับพริ้วไหวร่าง 2: ลูกปัดห้อยแกว่งจากเขากวาง + ผลึกน้ำแข็งหมุนรอบตัว
   if (aspKey === 'cryo') {
+    const swayBead = Math.sin(t * 5.2) * 3.5;
+    for (let side = -1; side <= 1; side += 2) {
+      const bx = Math.round(sx + side * 16);
+      const by = Math.round(sy - 46 - bob);
+      c.strokeStyle = '#94a3b8';
+      c.lineWidth = 1;
+      c.beginPath();
+      c.moveTo(bx, by);
+      c.lineTo(bx + swayBead, by + 11);
+      c.stroke();
+      c.fillStyle = side < 0 ? '#22d3ee' : '#a855f7';
+      c.fillRect(Math.round(bx + swayBead) - 2, by + 9, 4, 4);
+      c.fillStyle = '#ffffff';
+      c.fillRect(Math.round(bx + swayBead) - 1, by + 10, 2, 2);
+    }
     for (let k = 0; k < 3; k++) {
       const ca = t * 2.8 + k * ((Math.PI * 2) / 3);
-      const cx = Math.round(sx + Math.cos(ca) * 24);
-      const cy = Math.round(sy - 26 - bob + Math.sin(ca) * 9);
+      const cx = Math.round(sx + Math.cos(ca) * 26);
+      const cy = Math.round(sy - 26 - bob + Math.sin(ca) * 10);
       c.fillStyle = '#083344';
       c.fillRect(cx - 3, cy - 5, 6, 10);
       c.fillStyle = '#22d3ee';
@@ -1088,134 +1129,162 @@ function drawIsoHero(c, p, sx, sy) {
     }
   }
 
-  // 5. FORM-SPECIFIC WEAPONS (GREATSWORD / GLACIAL HALBERD / TWIN SICKLES)
+  // 5. FORM-SPECIFIC WEAPONS (SOLAR RUNE BLADE / CRYO CHARM LANCE / VOLT LONG SCYTHE)
   c.save();
-  c.translate(Math.round(sx), Math.round(sy - 20 - bob));
+  c.translate(Math.round(sx), Math.round(sy - 22 - bob));
   c.rotate(screenAimAngle + (p.swordSwingOffset || 0));
 
   const extraLen = Math.min(14, (p.forgeLevel || 0) * 2);
 
   if (aspKey === 'volt') {
-    // [3] VOLT REAPER: Dual Curved Crescent Sickles + Live Electric Arc Between Tips
-    const len = 30 + extraLen;
-    for (let side = -1; side <= 1; side += 2) {
-      const yOff = side * 9;
-      c.strokeStyle = '#07050f';
-      c.lineWidth = 7;
-      c.beginPath();
-      c.moveTo(6, yOff);
-      c.quadraticCurveTo(len * 0.65, yOff + side * 11, len, yOff + side * 3);
-      c.stroke();
+    const shaftLen = 48 + extraLen;
+    c.fillStyle = '#07050f';
+    c.fillRect(-16, -3, shaftLen + 16, 6);
+    c.fillStyle = '#4c1d95';
+    c.fillRect(-15, -2, shaftLen + 14, 4);
+    c.fillStyle = '#e879f9';
+    c.fillRect(-12, -1, shaftLen + 8, 2);
+    c.fillStyle = '#e879f9';
+    c.fillRect(-19, -5, 3, 10);
 
-      c.strokeStyle = isOverdrive ? '#fbbf24' : '#c084fc';
-      c.lineWidth = 4;
-      c.beginPath();
-      c.moveTo(7, yOff);
-      c.quadraticCurveTo(len * 0.65, yOff + side * 10, len, yOff + side * 3);
-      c.stroke();
-
-      c.strokeStyle = '#fae8ff';
-      c.lineWidth = 1.5;
-      c.beginPath();
-      c.moveTo(10, yOff);
-      c.quadraticCurveTo(len * 0.65, yOff + side * 9, len - 1, yOff + side * 3);
-      c.stroke();
-    }
-    const j1 = Math.sin(t * 40) * 4;
-    c.strokeStyle = isOverdrive ? '#fef08a' : '#f0abfc';
-    c.lineWidth = 1.8;
+    const tipX = shaftLen - 2;
+    c.fillStyle = '#07050f';
     c.beginPath();
-    c.moveTo(len - 2, -12);
-    c.lineTo(len + 4 + j1, 0);
-    c.lineTo(len - 2, 12);
-    c.stroke();
-  } else if (aspKey === 'cryo') {
-    // [2] CRYO LANCE: Extra-Long Glacial Halberd / Crystal Spear
-    const shaftLen = 30 + extraLen;
-    c.fillStyle = '#060a12';
-    c.fillRect(-4, -3, shaftLen + 4, 6);
-    c.fillStyle = '#64748b';
-    c.fillRect(-3, -2, shaftLen + 2, 4);
-    c.fillStyle = '#0891b2';
-    c.fillRect(shaftLen - 4, -10, 6, 20);
-    c.fillStyle = '#a5f3fc';
-    c.fillRect(shaftLen - 3, -8, 4, 16);
-    c.fillStyle = '#060a12';
-    c.beginPath();
-    c.moveTo(shaftLen, -8);
-    c.lineTo(shaftLen + 24, 0);
-    c.lineTo(shaftLen, 8);
+    c.moveTo(tipX + 6, -4);
+    c.quadraticCurveTo(tipX + 16, 18, tipX - 18, 34);
+    c.quadraticCurveTo(tipX - 2, 16, tipX - 5, 2);
     c.closePath();
     c.fill();
-    c.fillStyle = isOverdrive ? '#fbbf24' : '#22d3ee';
+
+    c.fillStyle = isOverdrive ? '#fbbf24' : '#a855f7';
     c.beginPath();
-    c.moveTo(shaftLen + 1, -6);
-    c.lineTo(shaftLen + 21, 0);
-    c.lineTo(shaftLen + 1, 6);
+    c.moveTo(tipX + 4, -2);
+    c.quadraticCurveTo(tipX + 13, 17, tipX - 15, 31);
+    c.quadraticCurveTo(tipX - 1, 15, tipX - 3, 2);
     c.closePath();
     c.fill();
+
+    c.fillStyle = isOverdrive ? '#fef08a' : '#f5d0fe';
+    c.beginPath();
+    c.moveTo(tipX + 3, 0);
+    c.quadraticCurveTo(tipX + 9, 14, tipX - 11, 26);
+    c.quadraticCurveTo(tipX + 2, 14, tipX - 1, 2);
+    c.closePath();
+    c.fill();
+
+    const sparkOff = Math.round(Math.sin(t * 28) * 3);
     c.fillStyle = '#ffffff';
-    c.fillRect(shaftLen + 2, -1, 14, 2);
-  } else {
-    // [1] SOLAR CLEAVE: Broad Flaming Greatsword with Ornate Crossguard
-    const bladeLen = 36 + extraLen;
-    c.fillStyle = '#090b10';
-    c.fillRect(5, -12, 7, 24);
-    c.fillStyle = '#f59e0b';
-    c.fillRect(6, -11, 5, 22);
-    c.fillStyle = '#fef08a';
-    c.fillRect(7, -8, 3, 16);
-    c.fillStyle = '#090b10';
-    c.fillRect(12, -6, bladeLen + 3, 12);
-    c.fillStyle = heroAccent;
-    c.fillRect(12, -5, bladeLen, 10);
+    c.fillRect(tipX + 5 + sparkOff, 10, 3, 3);
+    c.fillStyle = '#e879f9';
+    c.fillRect(tipX - 6 - sparkOff, 22, 3, 3);
+  } else if (aspKey === 'cryo') {
+    const shaftLen = 32 + extraLen;
+    c.fillStyle = '#060a12';
+    c.fillRect(-6, -3, shaftLen + 6, 6);
+    c.fillStyle = '#64748b';
+    c.fillRect(-5, -2, shaftLen + 4, 4);
     c.fillStyle = '#fbbf24';
-    c.fillRect(13, -3, bladeLen - 2, 6);
-    c.fillStyle = '#fffbeb';
-    c.fillRect(15, -1, bladeLen - 6, 2);
+    c.fillRect(-8, -3, 4, 6);
+
+    c.fillStyle = '#0891b2';
+    c.fillRect(8, -11, 5, 22);
+    c.fillStyle = '#a5f3fc';
+    c.fillRect(9, -9, 3, 18);
+    const beadWave = Math.sin(t * 8) * 3;
+    for (let b = 1; b <= 3; b++) {
+      c.fillStyle = b === 2 ? '#c084fc' : '#22d3ee';
+      c.fillRect(10 + Math.round(beadWave * (b * 0.4)), 10 + b * 5, 4, 4);
+    }
+
+    c.fillStyle = '#060a12';
+    c.beginPath();
+    c.moveTo(13, -7); c.lineTo(shaftLen + 22, 0); c.lineTo(13, 7);
+    c.closePath();
+    c.fill();
+    c.fillStyle = isOverdrive ? '#fbbf24' : '#38bdf8';
+    c.beginPath();
+    c.moveTo(14, -5); c.lineTo(shaftLen + 19, 0); c.lineTo(14, 5);
+    c.closePath();
+    c.fill();
+    c.fillStyle = '#f0f9ff';
+    c.fillRect(15, -1, shaftLen - 2, 2);
+  } else {
+    const bladeLen = 40 + extraLen;
+    c.fillStyle = '#090b10';
+    c.fillRect(4, -12, 7, 24);
+    c.fillStyle = '#f59e0b';
+    c.fillRect(5, -11, 5, 22);
+    c.fillStyle = '#090b10';
+    c.fillRect(11, -7, bladeLen + 4, 14);
+    c.fillStyle = '#18181b';
+    c.fillRect(12, -5, bladeLen, 10);
+    c.fillStyle = heroAccent;
+    c.fillRect(12, -6, bladeLen, 2);
+    c.fillRect(12, 4, bladeLen, 2);
+    for (let rn = 0; rn < 4; rn++) {
+      const rx = 16 + rn * 8;
+      c.fillStyle = rn % 2 === 0 ? '#ff6a00' : '#fef08a';
+      c.fillRect(rx, -2, 4, 4);
+    }
     const fl = Math.round(Math.sin(t * 24) * 2);
     c.fillStyle = '#ff6a00';
-    c.fillRect(20 + fl, -8, 6, 3);
-    c.fillRect(28 - fl, 5, 6, 3);
+    c.fillRect(22 + fl, -9, 6, 3);
+    c.fillRect(30 - fl, 6, 6, 3);
   }
   c.restore();
 
-  // 6. TRANSFORMATION BURST VFX WHEN SWITCHING FORMS [1/2/3]
+  // 6. EPIC TRANSFORMATION BURST VFX (เสาเพลิง / แท่งน้ำแข็งพุ่ง / ฟ้าฟาด 3 สาย)
   if ((p.transformAnimTimer || 0) > 0) {
-    const maxT = p.transformAnimMax || 0.75;
+    const maxT = p.transformAnimMax || 1.15;
     const prog = Math.min(1, p.transformAnimTimer / maxT);
     c.save();
-    c.globalAlpha = prog;
+    c.globalAlpha = Math.min(1, prog * 1.4);
     if (aspKey === 'solar') {
-      c.fillStyle = 'rgba(255, 138, 20, 0.35)';
-      c.fillRect(Math.round(sx - 18 * prog), Math.round(sy - 96), Math.round(36 * prog), 96);
-      c.fillStyle = '#fef08a';
-      c.fillRect(Math.round(sx - 10), Math.round(sy - 56 - bob), 20, 4);
-      c.fillRect(Math.round(sx - 8), Math.round(sy - 62 - bob), 4, 6);
-      c.fillRect(Math.round(sx - 2), Math.round(sy - 66 - bob), 4, 10);
-      c.fillRect(Math.round(sx + 4), Math.round(sy - 62 - bob), 4, 6);
+      const colW = Math.round(48 * prog);
+      c.fillStyle = 'rgba(255, 106, 0, 0.35)';
+      c.fillRect(Math.round(sx - colW * 0.5), Math.round(sy - 190), colW, 195);
+      c.fillStyle = 'rgba(254, 240, 138, 0.72)';
+      c.fillRect(Math.round(sx - colW * 0.22), Math.round(sy - 190), Math.max(4, Math.round(colW * 0.44)), 195);
+      c.strokeStyle = '#fbbf24';
+      c.lineWidth = 4 * prog + 1;
+      c.beginPath();
+      c.ellipse(Math.round(sx), Math.round(sy - 14), 66 * (1.2 - prog * 0.5), 30 * (1.2 - prog * 0.5), 0, 0, Math.PI * 2);
+      c.stroke();
     } else if (aspKey === 'cryo') {
-      for (let i = 0; i < 6; i++) {
-        const a = (i / 6) * Math.PI * 2;
-        const ix = Math.round(sx + Math.cos(a) * (28 * (1.2 - prog * 0.4)));
-        const iy = Math.round(sy + Math.sin(a) * 14);
+      for (let i = 0; i < 8; i++) {
+        const a = (i / 8) * Math.PI * 2 + (1 - prog) * 0.5;
+        const ix = Math.round(sx + Math.cos(a) * (38 * (1.15 - prog * 0.35)));
+        const iy = Math.round(sy + Math.sin(a) * 19);
+        const h = Math.round((28 + (i % 2) * 12) * prog);
+        c.fillStyle = '#0284c7';
+        c.fillRect(ix - 4, iy - h, 8, h);
         c.fillStyle = '#67e8f9';
-        c.fillRect(ix - 3, iy - Math.round(22 * prog), 6, Math.round(22 * prog));
+        c.fillRect(ix - 3, iy - h, 5, h);
         c.fillStyle = '#ffffff';
-        c.fillRect(ix - 1, iy - Math.round(20 * prog), 2, Math.round(14 * prog));
+        c.fillRect(ix - 1, iy - h, 2, Math.round(h * 0.75));
       }
     } else if (aspKey === 'volt') {
-      c.strokeStyle = '#e879f9';
-      c.lineWidth = 6 * prog + 2;
-      c.beginPath();
-      c.moveTo(Math.round(sx + 8), Math.round(sy - 180));
-      c.lineTo(Math.round(sx - 12), Math.round(sy - 120));
-      c.lineTo(Math.round(sx + 10), Math.round(sy - 65));
-      c.lineTo(Math.round(sx), Math.round(sy - 8));
-      c.stroke();
-      c.strokeStyle = '#ffffff';
-      c.lineWidth = 2.5 * prog + 1;
-      c.stroke();
+      const bolts = [
+        { ox: 0, w: 7, jitter: 14 },
+        { ox: -28, w: 4, jitter: 10 },
+        { ox: 28, w: 4, jitter: 10 },
+      ];
+      for (let b = 0; b < bolts.length; b++) {
+        const bt = bolts[b];
+        const bx = sx + bt.ox;
+        const jit = Math.sin(t * 60 + b * 2) * bt.jitter;
+        c.strokeStyle = '#e879f9';
+        c.lineWidth = bt.w * prog + 2;
+        c.beginPath();
+        c.moveTo(Math.round(bx + jit * 0.6), Math.round(sy - 240));
+        c.lineTo(Math.round(bx - jit), Math.round(sy - 160));
+        c.lineTo(Math.round(bx + jit * 0.8), Math.round(sy - 85));
+        c.lineTo(Math.round(bx), Math.round(sy - 6));
+        c.stroke();
+        c.strokeStyle = '#ffffff';
+        c.lineWidth = Math.max(1.5, bt.w * 0.45 * prog);
+        c.stroke();
+      }
     }
     c.restore();
   }
@@ -1229,18 +1298,30 @@ function drawIsoEnemy(c, en, sx, sy) {
 
   drawPixelShadow(c, sx, sy + 3, isBoss ? 34 : en.r * 0.95, isBoss ? 17 : en.r * 0.48);
 
+  const elKey = en.element || 'normal';
+  if (!isBoss && elKey !== 'normal') {
+    const elInfo = MONSTER_ELEMENTS[elKey] || MONSTER_ELEMENTS.normal;
+    c.strokeStyle = elInfo.color;
+    c.globalAlpha = 0.55;
+    c.lineWidth = 2;
+    c.beginPath();
+    c.ellipse(Math.round(sx), Math.round(sy + 2), en.r + 3, (en.r + 3) * 0.48, 0, 0, Math.PI * 2);
+    c.stroke();
+    c.globalAlpha = 1;
+  }
+
   if (en.slowTimer > 0) {
     c.strokeStyle = '#38bdf8';
     c.lineWidth = 2;
     c.beginPath();
-    c.ellipse(Math.round(sx), Math.round(sy + 2), en.r + 4, (en.r + 4) * 0.5, 0, 0, Math.PI * 2);
+    c.ellipse(Math.round(sx), Math.round(sy + 2), en.r + 5, (en.r + 5) * 0.5, 0, 0, Math.PI * 2);
     c.stroke();
   }
 
   if (en.type === 'weaver') {
     c.save();
     c.translate(Math.round(sx + (flipX ? -18 : 18)), Math.round(sy - 20 - bob));
-    c.strokeStyle = '#e879f9';
+    c.strokeStyle = elKey === 'fire' ? '#fb923c' : elKey === 'ice' ? '#38bdf8' : '#e879f9';
     c.lineWidth = 2;
     c.beginPath();
     c.arc(0, 0, 10 + Math.sin(gameState.worldTime * 8) * 2, 0, Math.PI * 2);
@@ -1249,13 +1330,15 @@ function drawIsoEnemy(c, en, sx, sy) {
   }
 
   let spr;
-  let label = '';
+  let label = en.displayName || en.type;
   if (isBoss) {
     const bArch = BOSS_ARCHETYPES[en.archetype] || BOSS_ARCHETYPES.sovereign;
     const accent = en.phase === 2 ? bArch.enrageColor : bArch.primaryColor;
+    const formKey = en.visualForm || 'boss_overlord';
+    const bossGrid = PIXEL_SPRITES[formKey] || PIXEL_SPRITES.boss_overlord;
     spr = getCachedPixelSprite(
-      `boss_${en.archetype}_${en.phase}`,
-      PIXEL_SPRITES.boss,
+      `${formKey}_${en.archetype}_${en.phase}`,
+      bossGrid,
       { k: '#06080d', d: en.phase === 2 ? '#4c0519' : '#1e293b', g: accent, c: '#fef08a', v: '#ffffff' },
       4,
       flipX,
@@ -1263,45 +1346,49 @@ function drawIsoEnemy(c, en, sx, sy) {
     );
     label = en.name;
   } else if (en.type === 'juggernaut') {
+    const primary = en.slowTimer > 0 ? '#38bdf8' : elKey === 'fire' ? '#b45309' : elKey === 'ice' ? '#0284c7' : elKey === 'volt' ? '#6d28d9' : '#475569';
+    const core = elKey === 'fire' ? '#ff6a00' : elKey === 'ice' ? '#22d3ee' : elKey === 'volt' ? '#e879f9' : '#ff2a5f';
     spr = getCachedPixelSprite(
-      `jug_${en.slowTimer > 0 ? 1 : 0}`,
+      `jug_${elKey}_${en.slowTimer > 0 ? 1 : 0}`,
       PIXEL_SPRITES.juggernaut,
-      { k: '#090b10', s: en.slowTimer > 0 ? '#38bdf8' : '#475569', d: '#1e293b', r: '#ff2a5f', f: '#fde047' },
+      { k: '#090b10', s: primary, d: '#1e293b', r: core, f: '#fde047' },
       3,
       flipX,
       en.hitFlash > 0
     );
-    label = 'Juggernaut';
   } else if (en.type === 'weaver') {
+    const robe = en.slowTimer > 0 ? '#0284c7' : elKey === 'fire' ? '#9a3412' : elKey === 'ice' ? '#0369a1' : elKey === 'volt' ? '#581c87' : '#6b21a8';
+    const trim = elKey === 'fire' ? '#fb923c' : elKey === 'ice' ? '#67e8f9' : '#c084fc';
     spr = getCachedPixelSprite(
-      `wev_${en.slowTimer > 0 ? 1 : 0}`,
+      `wev_${elKey}_${en.slowTimer > 0 ? 1 : 0}`,
       PIXEL_SPRITES.weaver,
-      { k: '#090b10', p: en.slowTimer > 0 ? '#0284c7' : '#6b21a8', m: '#c084fc', d: '#1e1b4b', c: '#38bdf8' },
+      { k: '#090b10', p: robe, m: trim, d: '#1e1b4b', c: '#38bdf8' },
       3,
       flipX,
       en.hitFlash > 0
     );
-    label = 'Weaver';
   } else if (en.type === 'stalker') {
+    const body = en.slowTimer > 0 ? '#0284c7' : elKey === 'fire' ? '#991b1b' : elKey === 'ice' ? '#0c4a6e' : '#312e81';
+    const blade = elKey === 'fire' ? '#fbbf24' : elKey === 'ice' ? '#67e8f9' : '#e879f9';
     spr = getCachedPixelSprite(
-      `stk_${en.slowTimer > 0 ? 1 : 0}`,
+      `stk_${elKey}_${en.slowTimer > 0 ? 1 : 0}`,
       PIXEL_SPRITES.stalker,
-      { k: '#090b10', v: '#312e81', d: '#0f172a', c: '#e879f9' },
+      { k: '#090b10', v: body, d: '#0f172a', c: blade },
       3,
       flipX,
       en.hitFlash > 0
     );
-    label = 'Stalker';
   } else {
+    const skin = en.slowTimer > 0 ? '#0284c7' : elKey === 'fire' ? '#ea580c' : elKey === 'ice' ? '#0284c7' : elKey === 'volt' ? '#7e22ce' : '#be123c';
+    const dark = elKey === 'fire' ? '#7c2d12' : elKey === 'ice' ? '#082f49' : elKey === 'volt' ? '#3b0764' : '#4c0519';
     spr = getCachedPixelSprite(
-      `hsk_${en.slowTimer > 0 ? 1 : 0}`,
+      `hsk_${elKey}_${en.slowTimer > 0 ? 1 : 0}`,
       PIXEL_SPRITES.husk,
-      { k: '#090b10', r: en.slowTimer > 0 ? '#0284c7' : '#be123c', d: '#4c0519', y: '#fbbf24' },
+      { k: '#090b10', r: skin, d: dark, y: '#fbbf24' },
       3,
       flipX,
       en.hitFlash > 0
     );
-    label = 'Husk';
   }
 
   const sqX = 1 + (en.squash || 0) * 0.25;
@@ -1310,27 +1397,62 @@ function drawIsoEnemy(c, en, sx, sy) {
   const drawH = Math.round(spr.height * sqY);
   c.drawImage(spr, Math.round(sx - drawW * 0.5), Math.round(sy - drawH + 4 - bob), drawW, drawH);
 
-  // Pixel ARPG Nameplate & Health Bar
+  // Orbiting Skulls for Arch-Lich Boss
+  if (isBoss && en.visualForm === 'boss_lich') {
+    for (let s = 0; s < 3; s++) {
+      const sa = gameState.worldTime * 3.2 + s * ((Math.PI * 2) / 3);
+      const ox = Math.round(sx + Math.cos(sa) * 38);
+      const oy = Math.round(sy - 34 + Math.sin(sa) * 14);
+      c.fillStyle = '#090b10';
+      c.fillRect(ox - 5, oy - 5, 10, 10);
+      c.fillStyle = '#e2e8f0';
+      c.fillRect(ox - 4, oy - 4, 8, 8);
+      c.fillStyle = '#ff2a5f';
+      c.fillRect(ox - 2, oy - 1, 2, 2);
+      c.fillRect(ox + 1, oy - 1, 2, 2);
+    }
+  }
+
   if (!isBoss) {
     const bw = en.type === 'juggernaut' ? 44 : 32;
     const bx = Math.round(sx - bw * 0.5);
     const by = Math.round(sy - drawH - 8 - bob);
+    const elInfo = MONSTER_ELEMENTS[elKey] || MONSTER_ELEMENTS.normal;
 
-    if (en.hp < en.maxHp || en.type === 'juggernaut' || en.type === 'weaver') {
+    if (en.hp < en.maxHp || en.type === 'juggernaut' || en.type === 'weaver' || elKey !== 'normal') {
       c.fillStyle = '#090b10';
       c.fillRect(bx - 1, by - 1, bw + 2, 6);
       c.fillStyle = '#3f1d2e';
       c.fillRect(bx, by, bw, 4);
-      c.fillStyle = en.type === 'weaver' ? '#c084fc' : '#ef4444';
+      c.fillStyle = elInfo.color;
       c.fillRect(bx, by, Math.round(bw * Math.max(0, en.hp / en.maxHp)), 4);
 
-      c.font = '700 10px JetBrains Mono, monospace';
+      c.font = '700 10px Silkscreen, monospace';
       c.textAlign = 'center';
       c.lineWidth = 3;
       c.strokeStyle = '#04060a';
       c.strokeText(label, Math.round(sx), by - 4);
-      c.fillStyle = '#f8fafc';
+      c.fillStyle = elKey === 'normal' ? '#f8fafc' : elInfo.color;
       c.fillText(label, Math.round(sx), by - 4);
+    }
+  }
+
+  // Elemental Primer & Vulnerable Badges above enemy (ส้ม=ไฟ, ฟ้า=น้ำแข็ง, ม่วง=สายฟ้า, แดง=เกราะแตก)
+  const badges = [];
+  if ((en.burnTimer || 0) > 0 || en.element === 'fire') badges.push('#ff6a00');
+  if ((en.slowTimer || 0) > 0 || en.element === 'ice') badges.push('#22d3ee');
+  if ((en.shockTimer || 0) > 0 || en.element === 'volt') badges.push('#c084fc');
+  if ((en.vulnTimer || 0) > 0) badges.push('#f43f5e');
+
+  if (badges.length > 0) {
+    const startX = Math.round(sx - ((badges.length - 1) * 10) * 0.5);
+    const badgeY = Math.round(sy - drawH - (isBoss ? 14 : 24) - bob);
+    for (let b = 0; b < badges.length; b++) {
+      const bx = startX + b * 10;
+      c.fillStyle = '#090b10';
+      c.fillRect(bx - 4, badgeY - 4, 8, 8);
+      c.fillStyle = badges[b];
+      c.fillRect(bx - 3, badgeY - 3, 6, 6);
     }
   }
 }
@@ -1349,21 +1471,21 @@ function renderArena() {
   }
 
   if (!isoMapCanvas) {
-    buildIsometricPixelMap();
+    buildIsometricPixelMap(gameState.biomeIndex || 0);
   }
 
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.imageSmoothingEnabled = false;
 
-  // 0. Atmospheric Deep Teal-Slate Backdrop
+  // 0. Biome-Aware Atmospheric Backdrop
+  const activeBiome = ROOM_BIOMES[(gameState.biomeIndex || 0) % ROOM_BIOMES.length];
   const bgGrad = ctx.createLinearGradient(0, 0, 0, viewH);
-  bgGrad.addColorStop(0, '#132429');
-  bgGrad.addColorStop(0.55, '#192f34');
-  bgGrad.addColorStop(1, '#0b161a');
+  bgGrad.addColorStop(0, activeBiome ? activeBiome.skyTop : '#132429');
+  bgGrad.addColorStop(0.55, activeBiome ? activeBiome.skyMid : '#192f34');
+  bgGrad.addColorStop(1, activeBiome ? activeBiome.skyBot : '#0b161a');
   ctx.fillStyle = bgGrad;
   ctx.fillRect(0, 0, viewW, viewH);
 
-  // Camera & Directional Shake
   const shakeMag = gameState.shakeMag;
   const jitter = shakeMag > 0 ? (Math.random() - 0.5) * shakeMag * 0.6 : 0;
   const shakeX = shakeMag > 0 ? gameState.shakeDirX * shakeMag * 1.3 + jitter : 0;
@@ -1373,10 +1495,10 @@ function renderArena() {
   const originX = Math.round(viewW * 0.5 - camIso.x + shakeX);
   const originY = Math.round(viewH * 0.5 - camIso.y + shakeY);
 
-  // 1. Draw Baked Isometric Pixel-Art Terrain Map
+  // 1. Baked Isometric Pixel-Art Terrain Map
   ctx.drawImage(isoMapCanvas, originX - isoMapOriginX, originY - isoMapOriginY);
 
-  // 2. Animated Swamp Lily Pads, Reeds & Water Shimmer
+  // 2. Animated Swamp Lily Pads & Reeds
   for (let i = 0; i < isoWaterProps.length; i++) {
     const prop = isoWaterProps[i];
     const pos = worldToIso(prop.x, prop.y, -4);
@@ -1401,7 +1523,40 @@ function renderArena() {
     }
   }
 
-  // 3. Isometric Ground-Projected Decals, Volt Magic Circle & Boss Telegraphs
+  // 2B. NORTHERN TUNNEL GATEWAY PORTAL (เปิดเมื่อเคลียร์เวฟเสร็จ)
+  if (gameState.portalOpen) {
+    const gPos = worldToIso(TUNNEL_GATE.x, TUNNEL_GATE.y, 14);
+    const gx = Math.round(originX + gPos.x);
+    const gy = Math.round(originY + gPos.y);
+    const pulse = 0.85 + Math.sin(gameState.worldTime * 7) * 0.15;
+
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    const pg = ctx.createRadialGradient(gx, gy, 6, gx, gy, 78 * pulse);
+    pg.addColorStop(0, 'rgba(255, 255, 255, 0.94)');
+    pg.addColorStop(0.35, 'rgba(34, 211, 238, 0.78)');
+    pg.addColorStop(0.7, 'rgba(168, 85, 247, 0.36)');
+    pg.addColorStop(1, 'rgba(0, 0, 0, 0)');
+    ctx.fillStyle = pg;
+    ctx.beginPath();
+    ctx.ellipse(gx, gy, 68 * pulse, 44 * pulse, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+
+    ctx.save();
+    ctx.font = '700 11px Silkscreen, monospace';
+    ctx.textAlign = 'center';
+    ctx.lineWidth = 4;
+    ctx.strokeStyle = '#04060a';
+    const bounceY = Math.round(Math.sin(gameState.worldTime * 6) * 4);
+    const gateText = `▼ ENTER TUNNEL (WAVE ${gameState.wave + 1}) ▼`;
+    ctx.strokeText(gateText, gx, gy - 44 + bounceY);
+    ctx.fillStyle = '#67e8f9';
+    ctx.fillText(gateText, gx, gy - 44 + bounceY);
+    ctx.restore();
+  }
+
+  // 3. Isometric Ground-Projected Decals, Ground Cracks, Volt Magic Circle & Boss Telegraphs
   const withIsoGroundPlane = (wx, wy, wz, drawFn) => {
     const pos = worldToIso(wx, wy, wz);
     ctx.save();
@@ -1415,18 +1570,51 @@ function renderArena() {
     const dec = gameState.floorDecals[i];
     const lifeRatio = typeof dec.life === 'number' && dec.maxLife ? Math.max(0, dec.life / dec.maxLife) : 1;
     withIsoGroundPlane(dec.x, dec.y, 1, () => {
-      ctx.globalAlpha = lifeRatio * 0.75;
-      ctx.fillStyle = dec.kind === 'frost' ? 'rgba(34,211,238,0.28)' : dec.kind === 'shock' ? 'rgba(168,85,247,0.22)' : 'rgba(10,12,18,0.58)';
-      ctx.strokeStyle = dec.kind === 'frost' ? '#67e8f9' : 'rgba(255,106,0,0.35)';
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.arc(0, 0, dec.r, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.stroke();
+      if (String(dec.kind).startsWith('crack_')) {
+        const crackCol = dec.kind === 'crack_solar' ? '#ff6a00' : dec.kind === 'crack_cryo' ? '#38bdf8' : '#d946ef';
+        const coreCol = dec.kind === 'crack_solar' ? '#fef08a' : dec.kind === 'crack_cryo' ? '#e0f2fe' : '#f5d0fe';
+        ctx.globalAlpha = Math.min(1, lifeRatio * 1.25);
+        ctx.rotate(dec.rot || 0);
+        ctx.fillStyle = 'rgba(5, 7, 12, 0.72)';
+        ctx.beginPath();
+        ctx.arc(0, 0, dec.r * 0.36, 0, Math.PI * 2);
+        ctx.fill();
+        for (let f = 0; f < 7; f++) {
+          const ang = (f / 7) * Math.PI * 2 + (f % 2) * 0.2;
+          const len = dec.r * (0.72 + (f % 3) * 0.16);
+          const mx = Math.cos(ang + 0.14) * (len * 0.52);
+          const my = Math.sin(ang + 0.14) * (len * 0.52);
+          const ex = Math.cos(ang) * len;
+          const ey = Math.sin(ang) * len;
+
+          ctx.strokeStyle = '#05070c';
+          ctx.lineWidth = 7;
+          ctx.beginPath();
+          ctx.moveTo(0, 0); ctx.lineTo(mx, my); ctx.lineTo(ex, ey);
+          ctx.stroke();
+
+          ctx.strokeStyle = crackCol;
+          ctx.lineWidth = 3.5;
+          ctx.stroke();
+
+          ctx.strokeStyle = coreCol;
+          ctx.lineWidth = 1.4;
+          ctx.stroke();
+        }
+      } else {
+        ctx.globalAlpha = lifeRatio * 0.75;
+        ctx.fillStyle = dec.kind === 'frost' ? 'rgba(34,211,238,0.28)' : dec.kind === 'shock' ? 'rgba(168,85,247,0.22)' : 'rgba(10,12,18,0.58)';
+        ctx.strokeStyle = dec.kind === 'frost' ? '#67e8f9' : 'rgba(255,106,0,0.35)';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(0, 0, dec.r, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+      }
     });
   }
 
-  // 3B. VOLT REAPER TRANSFORMATION MAGIC CIRCLE (PROJECTED ON ISOMETRIC GROUND)
+  // 3B. VOLT REAPER TRANSFORMATION MAGIC CIRCLE
   if (
     gameState.player &&
     gameState.player.weaponAspect === 'volt' &&
@@ -1434,7 +1622,7 @@ function renderArena() {
     voltSigilCanvas
   ) {
     const pHero = gameState.player;
-    const maxT = pHero.transformAnimMax || 0.75;
+    const maxT = pHero.transformAnimMax || 1.45;
     const remain = Math.max(0, pHero.transformAnimTimer / maxT);
     const elapsed = 1 - remain;
     const popScale = Math.min(1, elapsed * 4.2);
@@ -1449,7 +1637,6 @@ function renderArena() {
       ctx.rotate(gameState.worldTime * 1.4);
       ctx.drawImage(voltSigilCanvas, -drawRadius, -drawRadius, drawRadius * 2, drawRadius * 2);
 
-      // Extra soft purple radial bloom on ground
       const glow = ctx.createRadialGradient(0, 0, drawRadius * 0.1, 0, 0, drawRadius * 1.05);
       glow.addColorStop(0, 'rgba(232, 121, 249, 0.36)');
       glow.addColorStop(0.65, 'rgba(168, 85, 247, 0.16)');
@@ -1494,33 +1681,13 @@ function renderArena() {
 
   // 4. Depth-Sorted 2.5D Render Queue
   const renderQueue = [];
-
-  for (let i = 0; i < PILLARS.length; i++) {
-    const pil = PILLARS[i];
-    renderQueue.push({ depth: pil.x + pil.y, kind: 'pillar', obj: pil });
-  }
-  for (let i = 0; i < gameState.loots.length; i++) {
-    const orb = gameState.loots[i];
-    renderQueue.push({ depth: orb.x + orb.y, kind: 'loot', obj: orb });
-  }
-  for (let i = 0; i < gameState.dissolvingCorpses.length; i++) {
-    const dc = gameState.dissolvingCorpses[i];
-    renderQueue.push({ depth: dc.x + dc.y, kind: 'corpse', obj: dc });
-  }
-  for (let i = 0; i < gameState.afterimages.length; i++) {
-    const ai = gameState.afterimages[i];
-    renderQueue.push({ depth: ai.x + ai.y - 1, kind: 'afterimage', obj: ai });
-  }
-  for (let i = 0; i < gameState.enemies.length; i++) {
-    const en = gameState.enemies[i];
-    renderQueue.push({ depth: en.x + en.y, kind: 'enemy', obj: en });
-  }
-  if (gameState.boss && gameState.boss.hp > 0) {
-    renderQueue.push({ depth: gameState.boss.x + gameState.boss.y, kind: 'enemy', obj: gameState.boss });
-  }
-  if (gameState.player) {
-    renderQueue.push({ depth: gameState.player.x + gameState.player.y, kind: 'hero', obj: gameState.player });
-  }
+  for (let i = 0; i < PILLARS.length; i++) renderQueue.push({ depth: PILLARS[i].x + PILLARS[i].y, kind: 'pillar', obj: PILLARS[i] });
+  for (let i = 0; i < gameState.loots.length; i++) renderQueue.push({ depth: gameState.loots[i].x + gameState.loots[i].y, kind: 'loot', obj: gameState.loots[i] });
+  for (let i = 0; i < gameState.dissolvingCorpses.length; i++) renderQueue.push({ depth: gameState.dissolvingCorpses[i].x + gameState.dissolvingCorpses[i].y, kind: 'corpse', obj: gameState.dissolvingCorpses[i] });
+  for (let i = 0; i < gameState.afterimages.length; i++) renderQueue.push({ depth: gameState.afterimages[i].x + gameState.afterimages[i].y - 1, kind: 'afterimage', obj: gameState.afterimages[i] });
+  for (let i = 0; i < gameState.enemies.length; i++) renderQueue.push({ depth: gameState.enemies[i].x + gameState.enemies[i].y, kind: 'enemy', obj: gameState.enemies[i] });
+  if (gameState.boss && gameState.boss.hp > 0) renderQueue.push({ depth: gameState.boss.x + gameState.boss.y, kind: 'enemy', obj: gameState.boss });
+  if (gameState.player) renderQueue.push({ depth: gameState.player.x + gameState.player.y, kind: 'hero', obj: gameState.player });
 
   renderQueue.sort((a, b) => a.depth - b.depth);
 
@@ -1558,22 +1725,16 @@ function renderArena() {
     } else if (item.kind === 'afterimage') {
       const ai = item.obj;
       const curAsp = (gameState.player && gameState.player.weaponAspect) || 'solar';
-      const sprGrid = curAsp === 'cryo'
-        ? PIXEL_SPRITES.hero_cryo
-        : curAsp === 'volt'
-        ? PIXEL_SPRITES.hero_volt
-        : PIXEL_SPRITES.hero_solar;
+      const sprGrid = curAsp === 'cryo' ? PIXEL_SPRITES.hero_cryo : curAsp === 'volt' ? PIXEL_SPRITES.hero_volt : PIXEL_SPRITES.hero_solar;
       const aiPal = curAsp === 'volt'
-        ? { k: '#581c87', p: '#a855f7', d: '#7e22ce', v: '#f5d0fe', g: '#e879f9' }
+        ? { k: '#581c87', d: '#7e22ce', v: '#f5d0fe' }
         : curAsp === 'cryo'
-        ? { k: '#0284c7', c: '#38bdf8', i: '#bae6fd', d: '#0369a1', w: '#ffffff' }
+        ? { k: '#0284c7', c: '#38bdf8', i: '#bae6fd', d: '#0369a1', w: '#ffffff', g: '#7dd3fc', r: '#e0f2fe' }
         : { k: '#9a3412', g: '#fbbf24', d: '#ea580c', f: '#fdba74', y: '#fef08a', r: '#f97316' };
-      const flipAi = gameState.player
-        ? (Math.cos(gameState.player.aimAngle) - Math.sin(gameState.player.aimAngle)) < 0
-        : false;
+      const flipAi = gameState.player ? (Math.cos(gameState.player.aimAngle) - Math.sin(gameState.player.aimAngle)) < 0 : false;
       ctx.save();
       ctx.globalAlpha = Math.max(0, ai.alpha * 0.65);
-      const spr = getCachedPixelSprite(`hero_ai_${curAsp}`, sprGrid, aiPal, 3, flipAi, false);
+      const spr = getCachedPixelSprite(`hero2_ai_${curAsp}`, sprGrid, aiPal, 3, flipAi, false);
       ctx.drawImage(spr, Math.round(sx - spr.width * 0.5), Math.round(sy - spr.height + 5));
       ctx.restore();
     }
@@ -1760,7 +1921,6 @@ function renderArena() {
   ctx.drawImage(lightCanvas, 0, 0, viewW, viewH);
   ctx.restore();
 
-  // Atmospheric Vignette + Chromatic Impact Flash
   const vig = ctx.createRadialGradient(
     viewW * 0.5, viewH * 0.5, Math.min(viewW, viewH) * 0.38,
     viewW * 0.5, viewH * 0.5, Math.max(viewW, viewH) * 0.78
@@ -1782,7 +1942,7 @@ function renderArena() {
     ctx.restore();
   }
 
-  // 7. Bold Outlined Pixel-Style Floating Damage Numbers ("148! CRIT")
+  // 7. Bold Outlined Floating Damage Numbers
   ctx.textAlign = 'center';
   for (let i = 0; i < gameState.floatingTexts.length; i++) {
     const ft = gameState.floatingTexts[i];
@@ -1793,15 +1953,21 @@ function renderArena() {
 
     ctx.save();
     ctx.globalAlpha = ft.alpha;
-    ctx.font = `800 ${Math.round(15 * ft.scale)}px JetBrains Mono, monospace`;
+    ctx.font = `800 ${Math.round(15 * ft.scale)}px Silkscreen, monospace`;
     ctx.lineWidth = 4;
     ctx.strokeStyle = '#06080d';
     ctx.strokeText(ft.text, tx, ty);
     ctx.fillStyle = ft.color;
     ctx.fillText(ft.text, tx, ty);
 
-    if (isCritText && ft.scale > 1.1) {
-      ctx.font = '800 10px JetBrains Mono, monospace';
+    if (
+      isCritText &&
+      ft.scale > 1.1 &&
+      !String(ft.text).includes('MELT') &&
+      !String(ft.text).includes('OVERLOAD') &&
+      !String(ft.text).includes('SUPERCONDUCT')
+    ) {
+      ctx.font = '800 10px Silkscreen, monospace';
       ctx.strokeText('CRIT', tx, ty + 12);
       ctx.fillStyle = '#ff6a00';
       ctx.fillText('CRIT', tx, ty + 12);
@@ -1809,7 +1975,7 @@ function renderArena() {
     ctx.restore();
   }
 
-  // 8. Cursor Reticle & Off-Screen Enemy Chevrons
+  // 8. Cursor Reticle, Off-Screen Enemy Chevrons & Tunnel Direction Indicator
   const p = gameState.player;
   if (gameState.phase === 'playing' && p) {
     const mx = Math.round(gameState.mouseScreen.x);
@@ -1825,10 +1991,39 @@ function renderArena() {
     ctx.fillRect(-2, -2, 4, 4);
     ctx.restore();
 
-    const allFoes = gameState.boss && gameState.boss.hp > 0
-      ? [...gameState.enemies, gameState.boss]
-      : gameState.enemies;
     const pad = 34;
+    if (gameState.portalOpen) {
+      const gPos = worldToIso(TUNNEL_GATE.x, TUNNEL_GATE.y, 16);
+      const gsx = originX + gPos.x;
+      const gsy = originY + gPos.y;
+      if (gsx < 0 || gsx > viewW || gsy < 0 || gsy > viewH) {
+        const cx = viewW * 0.5;
+        const cy = viewH * 0.5;
+        const ang = Math.atan2(gsy - cy, gsx - cx);
+        const cosA = Math.cos(ang);
+        const sinA = Math.sin(ang);
+        const maxT = Math.min(
+          Math.abs((viewW * 0.5 - pad) / (cosA || 0.0001)),
+          Math.abs((viewH * 0.5 - pad) / (sinA || 0.0001))
+        );
+        const ix = cx + cosA * maxT;
+        const iy = cy + sinA * maxT;
+        ctx.save();
+        ctx.translate(ix, iy);
+        ctx.rotate(ang);
+        ctx.fillStyle = '#22d3ee';
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(14, 0); ctx.lineTo(-8, -8); ctx.lineTo(-4, 0); ctx.lineTo(-8, 8);
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+        ctx.restore();
+      }
+    }
+
+    const allFoes = gameState.boss && gameState.boss.hp > 0 ? [...gameState.enemies, gameState.boss] : gameState.enemies;
     for (let i = 0; i < allFoes.length; i++) {
       const foe = allFoes[i];
       const fPos = worldToIso(foe.x, foe.y, 16);
@@ -1865,6 +2060,14 @@ function renderArena() {
       ctx.stroke();
       ctx.restore();
     }
+  }
+
+  // 9. Smooth Room Transition Fade Overlay
+  if (gameState.transitionTimer > 0) {
+    const mid = 0.425;
+    const fadeAlpha = 1 - Math.abs(gameState.transitionTimer - mid) / mid;
+    ctx.fillStyle = `rgba(4, 6, 12, ${Math.max(0, Math.min(1, fadeAlpha)).toFixed(3)})`;
+    ctx.fillRect(0, 0, viewW, viewH);
   }
 
   syncHudDom();

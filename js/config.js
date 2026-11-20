@@ -25,7 +25,7 @@ const I18N = {
     skillDash: 'พริบตา',
     combatFeedTitle: 'บันทึกการรบ',
     startDesc:
-      'เมื่อวิหารหินออบซิเดียนกลางหุบเขาน้ำตกถูกฝูงอสูรไซเบอร์และจอมทัพบอสบุกกลืนกิน Vanguard ผู้กุมดาบยักษ์ SOLAR EDGE จึงต้องลุกขึ้นต่อสู้ฝ่าแต่ละเวฟ',
+      'เมื่อวิหารหินออบซิเดียนกลางหุบเขาน้ำตกถูกฝูงอสูรไซเบอร์และจอมทัพบอสบุกกลืนกิน Vanguard ผู้กุมดาบยักษ์ SOLAR EDGE จึงต้องลุกขึ้นสลับร่างธาตุ Solar / Cryo / Volt หลอมพลังและเปิด Overdrive [Q] แลกเลือดเพื่อทวงคืนแสงสว่างให้วิหาร',
     ctrlMove: 'เคลื่อนที่ & หลบเสาไฟ',
     ctrlCleave: 'ฟันกวาดเสี้ยวพระจันทร์',
     ctrlLance: 'พุ่งหอกหนักทะลวง (i-frames)',
@@ -66,7 +66,7 @@ const I18N = {
     skillDash: 'PHASE',
     combatFeedTitle: 'COMBAT TELEMETRY',
     startDesc:
-      'Carve through cybernetic swarms in an obsidian gothic sanctum with SOLAR EDGE, pierce with Heavy Lance, unleash Frost/Lightning Novas, Overdrive [Q], and Solar Cataclysm [R] against multi-phase bosses.',
+      'As cybernetic swarms and ancient warlords overrun the Obsidian Sanctum, the last Vanguard wields SOLAR EDGE—shifting between Solar, Cryo, and Volt aspects and burning vitality in Overdrive [Q] to reclaim the fallen temple.',
     ctrlMove: 'Move & cover around pillars',
     ctrlCleave: 'Crescent arc slash',
     ctrlLance: 'Heavy piercing thrust (i-frames)',
@@ -153,14 +153,18 @@ function setLanguage(lang) {
 }
 
 // -------------------------------------------------------------------------
-// 2. ZERO-DEPENDENCY WEB AUDIO API COMBAT SFX + AMBIENT PULSE
+// 2. ADAPTIVE BGM SEQUENCER + BIOME AMBIENCE + COMBAT SFX (WEB AUDIO API)
 // -------------------------------------------------------------------------
 const sfx = {
   ctx: null,
   master: null,
+  bgmGain: null,
+  ambientGain: null,
   muted: false,
   pulseTimer: null,
   pulseStep: 0,
+  ambientStarted: false,
+  ambientFilter: null,
 };
 
 function ensureAudio() {
@@ -170,10 +174,23 @@ function ensureAudio() {
       const AudioCtx = window.AudioContext || window.webkitAudioContext;
       if (!AudioCtx) return null;
       sfx.ctx = new AudioCtx();
+
       sfx.master = sfx.ctx.createGain();
-      sfx.master.gain.setValueAtTime(0.34, sfx.ctx.currentTime);
+      sfx.master.gain.setValueAtTime(0.36, sfx.ctx.currentTime);
       sfx.master.connect(sfx.ctx.destination);
-      startAmbientPulse();
+
+      // Dedicated BGM Bus (smoothly swells during Boss fights & ducks in menus)
+      sfx.bgmGain = sfx.ctx.createGain();
+      sfx.bgmGain.gain.setValueAtTime(0.22, sfx.ctx.currentTime);
+      sfx.bgmGain.connect(sfx.master);
+
+      // Dedicated Ambient Wind / Biome Bed Bus
+      sfx.ambientGain = sfx.ctx.createGain();
+      sfx.ambientGain.gain.setValueAtTime(0.055, sfx.ctx.currentTime);
+      sfx.ambientGain.connect(sfx.master);
+
+      startBiomeAmbience();
+      startDynamicBgmEngine();
     }
     if (sfx.ctx.state === 'suspended') {
       sfx.ctx.resume().catch(() => {});
@@ -184,47 +201,13 @@ function ensureAudio() {
   }
 }
 
-function startAmbientPulse() {
-  if (sfx.pulseTimer) return;
-  const bassNotes = [55, 55, 65.41, 73.42, 55, 55, 82.41, 73.42];
-  sfx.pulseTimer = setInterval(() => {
-    if (sfx.muted || !sfx.ctx || sfx.ctx.state !== 'running') return;
-    if (gameState.phase !== 'playing') return;
-    try {
-      const now = sfx.ctx.currentTime;
-      const osc = sfx.ctx.createOscillator();
-      const filter = sfx.ctx.createBiquadFilter();
-      const gain = sfx.ctx.createGain();
-
-      const freq = bassNotes[sfx.pulseStep % bassNotes.length] * (gameState.boss ? 1.25 : 1);
-      sfx.pulseStep++;
-
-      osc.type = 'sawtooth';
-      osc.frequency.setValueAtTime(freq, now);
-
-      filter.type = 'lowpass';
-      filter.frequency.setValueAtTime(gameState.player.surgeTimer > 0 ? 540 : 240, now);
-
-      gain.gain.setValueAtTime(0.001, now);
-      gain.gain.linearRampToValueAtTime(0.068, now + 0.02);
-      gain.gain.exponentialRampToValueAtTime(0.0008, now + 0.24);
-
-      osc.connect(filter);
-      filter.connect(gain);
-      gain.connect(sfx.master);
-      osc.start(now);
-      osc.stop(now + 0.25);
-    } catch (_) {}
-  }, 250);
-}
-
 let cachedNoiseBuffer = null;
 
 function getWhiteNoiseBuffer(ctx) {
   if (cachedNoiseBuffer && cachedNoiseBuffer.sampleRate === ctx.sampleRate) {
     return cachedNoiseBuffer;
   }
-  const length = Math.floor(ctx.sampleRate * 1.2);
+  const length = Math.floor(ctx.sampleRate * 1.6);
   const buffer = ctx.createBuffer(1, length, ctx.sampleRate);
   const data = buffer.getChannelData(0);
   for (let i = 0; i < length; i++) {
@@ -232,6 +215,233 @@ function getWhiteNoiseBuffer(ctx) {
   }
   cachedNoiseBuffer = buffer;
   return buffer;
+}
+
+function startBiomeAmbience() {
+  if (sfx.ambientStarted || !sfx.ctx) return;
+  sfx.ambientStarted = true;
+  try {
+    const src = sfx.ctx.createBufferSource();
+    src.buffer = getWhiteNoiseBuffer(sfx.ctx);
+    src.loop = true;
+
+    const filter = sfx.ctx.createBiquadFilter();
+    filter.type = 'bandpass';
+    filter.frequency.setValueAtTime(320, sfx.ctx.currentTime);
+    filter.Q.setValueAtTime(1.4, sfx.ctx.currentTime);
+    sfx.ambientFilter = filter;
+
+    src.connect(filter);
+    filter.connect(sfx.ambientGain);
+    src.start();
+  } catch (_) {}
+}
+
+function playBgmNote(ctx, now, type, freq, duration, vol, filterFreq = 1600, attack = 0.008) {
+  if (!freq || freq <= 0) return;
+  const osc = ctx.createOscillator();
+  const filter = ctx.createBiquadFilter();
+  const gain = ctx.createGain();
+
+  osc.type = type;
+  osc.frequency.setValueAtTime(freq, now);
+
+  filter.type = 'lowpass';
+  filter.frequency.setValueAtTime(filterFreq, now);
+
+  gain.gain.setValueAtTime(0.0006, now);
+  gain.gain.linearRampToValueAtTime(vol, now + Math.min(attack, duration * 0.35));
+  gain.gain.exponentialRampToValueAtTime(0.0005, now + duration);
+
+  osc.connect(filter);
+  filter.connect(gain);
+  gain.connect(sfx.bgmGain);
+  osc.start(now);
+  osc.stop(now + duration + 0.02);
+}
+
+function playBgmDrum(ctx, now, kind, vol) {
+  if (kind === 'kick') {
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(135, now);
+    osc.frequency.exponentialRampToValueAtTime(34, now + 0.12);
+    gain.gain.setValueAtTime(0.001, now);
+    gain.gain.linearRampToValueAtTime(vol, now + 0.005);
+    gain.gain.exponentialRampToValueAtTime(0.0006, now + 0.14);
+    osc.connect(gain);
+    gain.connect(sfx.bgmGain);
+    osc.start(now);
+    osc.stop(now + 0.16);
+  } else if (kind === 'snare') {
+    const src = ctx.createBufferSource();
+    src.buffer = getWhiteNoiseBuffer(ctx);
+    const filter = ctx.createBiquadFilter();
+    filter.type = 'highpass';
+    filter.frequency.setValueAtTime(1250, now);
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(0.001, now);
+    gain.gain.linearRampToValueAtTime(vol, now + 0.004);
+    gain.gain.exponentialRampToValueAtTime(0.0006, now + 0.11);
+    src.connect(filter);
+    filter.connect(gain);
+    gain.connect(sfx.bgmGain);
+    src.start(now);
+    src.stop(now + 0.13);
+  } else if (kind === 'hat') {
+    const src = ctx.createBufferSource();
+    src.buffer = getWhiteNoiseBuffer(ctx);
+    const filter = ctx.createBiquadFilter();
+    filter.type = 'highpass';
+    filter.frequency.setValueAtTime(6200, now);
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(0.0008, now);
+    gain.gain.linearRampToValueAtTime(vol, now + 0.002);
+    gain.gain.exponentialRampToValueAtTime(0.0005, now + 0.045);
+    src.connect(filter);
+    filter.connect(gain);
+    gain.connect(sfx.bgmGain);
+    src.start(now);
+    src.stop(now + 0.06);
+  }
+}
+
+function startDynamicBgmEngine() {
+  if (sfx.pulseTimer) return;
+
+  const normalBass = [55, 0, 55, 0, 65.41, 0, 55, 0, 73.42, 0, 65.41, 0, 49.0, 0, 51.91, 0];
+  const normalArp  = [220, 0, 261.63, 0, 329.63, 0, 261.63, 0, 293.66, 0, 261.63, 0, 246.94, 0, 196.0, 0];
+
+  const bossBass   = [82.41, 82.41, 98.0, 82.41, 110.0, 82.41, 123.47, 110.0, 82.41, 82.41, 130.81, 123.47, 110.0, 98.0, 92.5, 77.78];
+  const bossLead   = [329.63, 0, 392.0, 440.0, 493.88, 0, 440.0, 392.0, 523.25, 0, 493.88, 440.0, 392.0, 369.99, 311.13, 329.63];
+  const bossP2Lead = [659.25, 622.25, 659.25, 783.99, 880.0, 783.99, 659.25, 622.25, 783.99, 0, 739.99, 659.25, 587.33, 523.25, 493.88, 622.25];
+
+  sfx.pulseTimer = setInterval(() => {
+    if (sfx.muted || !sfx.ctx || sfx.ctx.state !== 'running') return;
+    if (typeof gameState === 'undefined') return;
+
+    const now = sfx.ctx.currentTime;
+    const isPlaying = gameState.phase === 'playing';
+    const isMenuDucked = gameState.phase === 'paused' || gameState.phase === 'upgrade' || gameState.phase === 'arpg_pause';
+    const boss = gameState.boss && gameState.boss.hp > 0 ? gameState.boss : null;
+    const isBoss = Boolean(boss);
+    const isPhase2 = Boolean(boss && boss.phase === 2);
+    const isOverdrive = Boolean(gameState.player && gameState.player.surgeTimer > 0);
+
+    let targetBgmVol = 0.0;
+    if (isPlaying) {
+      targetBgmVol = isPhase2 ? 0.50 : isBoss ? 0.40 : isOverdrive ? 0.30 : 0.21;
+    } else if (isMenuDucked) {
+      targetBgmVol = 0.08;
+    } else if (gameState.phase === 'title') {
+      targetBgmVol = 0.10;
+    }
+    sfx.bgmGain.gain.setTargetAtTime(targetBgmVol, now, 0.28);
+
+    if (sfx.ambientFilter) {
+      const biomeFreqs = [340, 210, 680, 480];
+      const bFreq = biomeFreqs[(gameState.biomeIndex || 0) % biomeFreqs.length];
+      sfx.ambientFilter.frequency.setTargetAtTime(isBoss ? bFreq * 1.45 : bFreq, now, 0.5);
+      sfx.ambientGain.gain.setTargetAtTime(isPlaying || gameState.phase === 'title' ? 0.05 : 0.015, now, 0.3);
+    }
+
+    if (!isPlaying && !isMenuDucked) return;
+
+    const step = sfx.pulseStep % 16;
+    sfx.pulseStep++;
+
+    try {
+      if (isBoss) {
+        const bassFreq = bossBass[step];
+        playBgmNote(sfx.ctx, now, 'sawtooth', bassFreq, 0.16, isPhase2 ? 0.24 : 0.20, isPhase2 ? 780 : 560, 0.005);
+
+        if (step % 4 === 0) {
+          playBgmNote(sfx.ctx, now, 'triangle', bassFreq * 0.5, 0.35, 0.22, 260, 0.01);
+          playBgmDrum(sfx.ctx, now, 'kick', isPhase2 ? 0.34 : 0.28);
+        }
+        if (isPhase2 && (step === 2 || step === 10 || step === 14)) {
+          playBgmDrum(sfx.ctx, now, 'kick', 0.24);
+        }
+        if (step === 4 || step === 12) {
+          playBgmDrum(sfx.ctx, now, 'snare', isPhase2 ? 0.22 : 0.17);
+        }
+        if (step % 2 === 1 || isPhase2) {
+          playBgmDrum(sfx.ctx, now, 'hat', step % 2 === 1 ? 0.08 : 0.045);
+        }
+
+        const leadFreq = isPhase2 ? bossP2Lead[step] : bossLead[step];
+        if (leadFreq > 0) {
+          playBgmNote(
+            sfx.ctx,
+            now,
+            isPhase2 ? 'sawtooth' : 'square',
+            leadFreq,
+            isPhase2 ? 0.14 : 0.20,
+            isPhase2 ? 0.13 : 0.10,
+            isPhase2 ? 2600 : 1850,
+            0.008
+          );
+        }
+      } else {
+        const biomePitch = [1.0, 0.943, 1.059, 1.122][(gameState.biomeIndex || 0) % 4];
+        const bassFreq = normalBass[step] * biomePitch;
+        if (bassFreq > 0) {
+          playBgmNote(
+            sfx.ctx,
+            now,
+            'sawtooth',
+            bassFreq,
+            0.22,
+            0.16,
+            isOverdrive ? 620 : 300,
+            0.015
+          );
+        }
+
+        if (step === 0 || step === 8) {
+          playBgmDrum(sfx.ctx, now, 'kick', isOverdrive ? 0.24 : 0.16);
+        }
+        if (isOverdrive && (step === 4 || step === 12)) {
+          playBgmDrum(sfx.ctx, now, 'snare', 0.12);
+        }
+        if (step % 4 === 2) {
+          playBgmDrum(sfx.ctx, now, 'hat', 0.045);
+        }
+
+        const arpFreq = normalArp[step] * biomePitch;
+        if (arpFreq > 0) {
+          playBgmNote(sfx.ctx, now, 'triangle', arpFreq, 0.26, 0.085, isOverdrive ? 1800 : 1100, 0.012);
+        }
+      }
+    } catch (_) {}
+  }, 145);
+}
+
+function playMusicStinger(kind) {
+  const ctx = ensureAudio();
+  if (!ctx || sfx.muted) return;
+  try {
+    const now = ctx.currentTime;
+    if (kind === 'boss_intro') {
+      playSubThump(ctx, now, 110, 32, 0.75, 0.42);
+      playToneSweep(ctx, now, 'sawtooth', 82.41, 82.41, 0.95, 0.22, 0.06);
+      playToneSweep(ctx, now + 0.04, 'sawtooth', 123.47, 123.47, 0.92, 0.16, 0.06);
+      playToneSweep(ctx, now + 0.08, 'square', 155.56, 164.81, 0.85, 0.11, 0.08);
+      playFilteredNoiseBurst(ctx, now, 0.65, 'lowpass', 900, 140, 1.8, 0.24);
+    } else if (kind === 'boss_phase2') {
+      playToneSweep(ctx, now, 'sawtooth', 164.81, 493.88, 0.55, 0.20, 0.04);
+      playToneSweep(ctx, now + 0.08, 'square', 246.94, 659.25, 0.55, 0.14, 0.05);
+      playSubThump(ctx, now + 0.12, 160, 28, 0.6, 0.4);
+      playFilteredNoiseBurst(ctx, now, 0.5, 'bandpass', 600, 3200, 2.2, 0.26);
+    } else if (kind === 'boss_victory') {
+      const notes = [220, 277.18, 329.63, 440, 554.37];
+      notes.forEach((n, idx) => {
+        playToneSweep(ctx, now + idx * 0.09, 'triangle', n, n, 0.75, 0.17, 0.015);
+        playToneSweep(ctx, now + idx * 0.09, 'sine', n * 2, n * 2, 0.55, 0.07, 0.015);
+      });
+    }
+  } catch (_) {}
 }
 
 function playFilteredNoiseBurst(ctx, now, duration, filterType, startFreq, endFreq, qVal, peakGain) {
@@ -360,7 +570,7 @@ function playCombatSfx(type, pitchScale = 1) {
 }
 
 // -------------------------------------------------------------------------
-// 3. SANCTUM ENVIRONMENT, BLESSINGS & CORE CANVAS HANDLES
+// 3. SANCTUM ENVIRONMENT, 15 MULTI-BRANCH BLESSINGS & CANVAS HANDLES
 // -------------------------------------------------------------------------
 const ARENA_W = 1920;
 const ARENA_H = 1360;
@@ -383,54 +593,178 @@ const THERMAL_VENTS = [
 ];
 
 const RELIC_POOL = [
+  // --- 1. BLADE (สายดาบ & คริติคอล) ---
   {
     id: 'twin_cleave',
+    branch: 'blade',
     tag: 'BLADE // ARC',
     accent: 'border-orange-400 text-amber-300',
     name: { th: 'Twin Cleave Arc', en: 'Twin Cleave Arc' },
     desc: {
-      th: 'ขยายมุมฟันกวาดเสี้ยวพระจันทร์ +35% และเพิ่มความเสียหายฟันอีก +28%',
-      en: '+35% wider crescent cleave arc and +28% blade damage',
+      th: 'ขยายมุมฟันกวาดเสี้ยวพระจันทร์ +35% และเพิ่มความเสียหายฟันอีก +25%',
+      en: '+35% wider crescent cleave arc and +25% blade damage',
     },
   },
   {
-    id: 'vampiric_edge',
-    tag: 'CRIMSON // LEECH',
-    accent: 'border-rose-400 text-rose-300',
-    name: { th: 'Vampiric Edge', en: 'Vampiric Edge' },
+    id: 'phantom_blade',
+    branch: 'blade',
+    tag: 'BLADE // ECHO',
+    accent: 'border-amber-400 text-amber-200',
+    name: { th: 'Phantom Echo', en: 'Phantom Echo' },
     desc: {
-      th: 'ดูดพลังชีวิต +4 ต่อการฟันโดนศัตรู และเพิ่มพลังชีวิตสูงสุด +20',
-      en: 'Leech +4 HP per cleave hit and gain +20 Max HP',
+      th: 'ฮิตที่ 3 ของการฟันจะปล่อยคลื่นดาบทะลวงพุ่งไปข้างหน้า สร้างดาเมจ 85%',
+      en: '3rd combo cleave fires a piercing energy blade wave forward (85% dmg)',
+    },
+  },
+  {
+    id: 'executioner_edge',
+    branch: 'blade',
+    tag: 'BLADE // EXECUTE',
+    accent: 'border-red-500 text-red-300',
+    name: { th: "Executioner's Mark", en: "Executioner's Mark" },
+    desc: {
+      th: 'ศัตรูที่เลือดต่ำกว่า 40% รับดาเมจแรงขึ้น +45% และเพิ่มโอกาสคริติคอล +10%',
+      en: '+45% damage against foes below 40% HP and +10% Crit Chance',
+    },
+  },
+
+  // --- 2. ELEMENTAL (สายปฏิกิริยาธาตุ) ---
+  {
+    id: 'elemental_catalyst',
+    branch: 'elemental',
+    tag: 'ELEMENT // CATALYST',
+    accent: 'border-fuchsia-400 text-fuchsia-300',
+    name: { th: 'Elemental Catalyst', en: 'Elemental Catalyst' },
+    desc: {
+      th: 'ปฏิกิริยาธาตุ (Melt / Overload / Superconduct) แรงขึ้น +45% และติดซ้ำไวขึ้น',
+      en: '+45% Elemental Reaction damage and faster reaction trigger window',
     },
   },
   {
     id: 'chain_nova',
-    tag: 'EMBER // NOVA',
-    accent: 'border-amber-400 text-amber-300',
+    branch: 'elemental',
+    tag: 'ELEMENT // NOVA',
+    accent: 'border-cyan-400 text-cyan-300',
     name: { th: 'Molten Chain Nova', en: 'Molten Chain Nova' },
     desc: {
-      th: 'เพิ่มรัศมีคลื่นโนวา +32% และปล่อยลูกไฟพลังงานเพิ่ม 4 ทิศทาง',
-      en: '+32% Nova blast radius and launch 4 radial ember bolts',
+      th: 'เพิ่มรัศมีคลื่นโนวา [E] +32% และปล่อยลูกไฟพลังงานเพิ่ม 4 ทิศทาง',
+      en: '+32% Pulse Nova radius and launch 4 radial ember bolts',
     },
   },
   {
+    id: 'prismatic_shift',
+    branch: 'elemental',
+    tag: 'ELEMENT // SHIFT',
+    accent: 'border-sky-400 text-sky-200',
+    name: { th: 'Prismatic Shift', en: 'Prismatic Shift' },
+    desc: {
+      th: 'กดสลับร่าง [1/2/3] สร้างคลื่นระเบิดดาเมจธาตุรอบตัว + ฟื้นฟู +6 HP (CD 3 วิ)',
+      en: 'Aspect shifts deal AoE elemental burst damage & heal +6 HP (3s CD)',
+    },
+  },
+
+  // --- 3. VANGUARD (สายถึก เกราะ & สวนกลับ) ---
+  {
+    id: 'vampiric_edge',
+    branch: 'vanguard',
+    tag: 'VANGUARD // LEECH',
+    accent: 'border-rose-400 text-rose-300',
+    name: { th: 'Vampiric Edge', en: 'Vampiric Edge' },
+    desc: {
+      th: 'ดูดพลังชีวิต +4 ต่อการฟันโดนศัตรู และเพิ่มพลังชีวิตสูงสุด +25',
+      en: 'Leech +4 HP per cleave hit and gain +25 Max HP',
+    },
+  },
+  {
+    id: 'thorns_aegis',
+    branch: 'vanguard',
+    tag: 'VANGUARD // THORNS',
+    accent: 'border-emerald-400 text-emerald-300',
+    name: { th: 'Obsidian Thorns', en: 'Obsidian Thorns' },
+    desc: {
+      th: 'ลดความเสียหายที่ได้รับลง 15% และเมื่อโดนตีจะระเบิดคลื่นสวนกลับผลักศัตรูรอบตัว',
+      en: '-15% incoming damage and unleash a counter shockwave when hit',
+    },
+  },
+  {
+    id: 'second_wind',
+    branch: 'vanguard',
+    tag: 'VANGUARD // SHIELD',
+    accent: 'border-teal-400 text-teal-200',
+    name: { th: 'Solar Aegis', en: 'Solar Aegis' },
+    desc: {
+      th: 'รับเกราะดูดซับดาเมจ +35 Shield (รีเกราะเต็มอัตโนมัติทุกเวฟและเมื่อเก็บลูกแก้วฮีล)',
+      en: 'Gain +35 rechargeable Shield (refills every wave and on Heal Orb)',
+    },
+  },
+
+  // --- 4. TEMPO (สายพริ้ว พริบตา & คูลดาวน์) ---
+  {
     id: 'overclock_cd',
-    tag: 'ARC // HASTE',
-    accent: 'border-cyan-400 text-cyan-300',
+    branch: 'tempo',
+    tag: 'TEMPO // HASTE',
+    accent: 'border-cyan-300 text-cyan-200',
     name: { th: 'Overclocked Phase', en: 'Overclocked Phase' },
     desc: {
-      th: 'ลดคูลดาวน์สกิลและฟื้นฟูพริบตาเร็วขึ้น 25% พร้อมความเร็วเดิน +12%',
-      en: '25% faster skill/phase cooldowns and +12% move speed',
+      th: 'ลดคูลดาวน์สกิลและฟื้นฟูพริบตาเร็วขึ้น 22% พร้อมความเร็วเดิน +12%',
+      en: '22% faster skill/phase cooldowns and +12% move speed',
+    },
+  },
+  {
+    id: 'phase_lightning',
+    branch: 'tempo',
+    tag: 'TEMPO // VOLT STEP',
+    accent: 'border-violet-400 text-violet-300',
+    name: { th: 'Volt Step', en: 'Volt Step' },
+    desc: {
+      th: 'เพิ่มชาร์จพริบตา +1 และทุกครั้งที่พุ่ง [SPACE] จะฟาดสายฟ้าใส่ศัตรูรอบตัว',
+      en: '+1 max Phase Dash charge; dashing strikes nearby foes with lightning',
     },
   },
   {
     id: 'void_piercer',
-    tag: 'VOID // CRIT',
+    branch: 'tempo',
+    tag: 'TEMPO // LANCE',
     accent: 'border-purple-400 text-purple-300',
     name: { th: 'Void Piercer', en: 'Void Piercer' },
     desc: {
-      th: 'หอกหนักทะลวงแรงขึ้น +40% และสร้างคลื่นกระแทกปลายทาง',
-      en: '+40% Heavy Lance damage with a shock detonation at impact',
+      th: 'หอกทะลวง [คลิกขวา] แรงขึ้น +40%, คูลดาวน์ไวขึ้น 15% และระเบิดดาเมจ AoE ปลายทาง',
+      en: '+40% Heavy Lance damage, -15% CD, and AoE blast at impact',
+    },
+  },
+
+  // --- 5. OVERDRIVE (สายคลั่งทอง & มหาเวท) ---
+  {
+    id: 'blood_frenzy',
+    branch: 'overdrive',
+    tag: 'OVERDRIVE // PACT',
+    accent: 'border-yellow-400 text-yellow-300',
+    name: { th: 'Blood Frenzy', en: 'Blood Frenzy' },
+    desc: {
+      th: 'ลดการเสียเลือดในโหมด Overdrive [Q] ลง 40% และยืดระยะเวลาคลั่งทอง +2 วินาที',
+      en: '-40% HP drain during Overdrive [Q] and +2s duration',
+    },
+  },
+  {
+    id: 'solar_echo',
+    branch: 'overdrive',
+    tag: 'OVERDRIVE // SOLAR',
+    accent: 'border-orange-500 text-orange-300',
+    name: { th: 'Cataclysm Echo', en: 'Cataclysm Echo' },
+    desc: {
+      th: 'มหาเวทสุริยัน [R] คูลดาวน์ไวขึ้น 25% และยิงลูกไฟสุริยันกระจายซ้ำอีก 6 ลูก',
+      en: '-25% Solar Cataclysm [R] CD and unleash 6 extra radial solar bolts',
+    },
+  },
+  {
+    id: 'orb_magnet',
+    branch: 'overdrive',
+    tag: 'OVERDRIVE // HARVEST',
+    accent: 'border-amber-300 text-amber-200',
+    name: { th: 'Soul Harvester', en: 'Soul Harvester' },
+    desc: {
+      th: 'ดูดลูกแก้วไกลขึ้น 65%, เติมเกจ Overdrive แรงขึ้น +35% และดรอป Shards เพิ่ม +2',
+      en: '+65% orb magnet range, +35% Overdrive gain, and +2 bonus Shards',
     },
   },
 ];
@@ -438,12 +772,11 @@ const RELIC_POOL = [
 const canvas = document.getElementById('game-canvas');
 const ctx = canvas.getContext('2d');
 
-// Offscreen Dynamic Lightmap Canvas (used by renderer.js)
 const lightCanvas = document.createElement('canvas');
 const lightCtx = lightCanvas.getContext('2d');
 
 // -------------------------------------------------------------------------
-// 4. ARPG EXPANSION: WEAPON ASPECTS [1/2/3], CONSTELLATION [T], FORGE [I]
+// 4. ARPG EXPANSION: ASPECTS, BOSSES, BIOMES, ELEMENTS & TUNNEL GATE
 // -------------------------------------------------------------------------
 const WEAPON_ASPECTS = {
   solar: { key: 'solar', label: 'SOLAR CLEAVE', color: '#ff6a00', core: '#ffb800', arcMult: 1.0, dmgMult: 1.15 },
@@ -480,6 +813,76 @@ const BOSS_ARCHETYPES = {
     patternCd: 1.85,
   },
 };
+
+const ROOM_BIOMES = [
+  {
+    key: 'swamp_ruins',
+    name: { th: 'หนองน้ำวิหารออบซิเดียน', en: 'OBSIDIAN SWAMP SANCTUM' },
+    skyTop: '#132429', skyMid: '#192f34', skyBot: '#0b161a',
+    waterCol: 'rgba(34, 96, 108, 0.56)', waterEdge: 'rgba(125, 225, 220, 0.28)',
+    pal: {
+      ruin: { top: '#244b55', left: '#17343c', right: '#0d2026', highlight: 'rgba(125,211,252,0.22)' },
+      ruinDark: { top: '#1c3b44', left: '#122830', right: '#09171d', highlight: 'rgba(94,234,212,0.16)' },
+      stone: { top: '#2b3944', left: '#1c2630', right: '#111820', highlight: 'rgba(203,213,225,0.14)' },
+      dirt: { top: '#7c5338', left: '#593925', right: '#3d2517', highlight: 'rgba(253,186,116,0.18)' },
+      grass: { top: '#6ca632', left: '#593925', right: '#3b2416', overhangLeft: '#558b2f', overhangRight: '#33691e', highlight: 'rgba(217,249,157,0.34)' },
+      submerged: { top: '#253c42', left: '#192b30', right: '#101d21', highlight: 'rgba(94,234,212,0.10)' },
+    },
+  },
+  {
+    key: 'molten_crypt',
+    name: { th: 'สุสานเถ้าลาวา', en: 'MOLTEN ASH CRYPT' },
+    skyTop: '#241114', skyMid: '#301518', skyBot: '#14080a',
+    waterCol: 'rgba(234, 88, 12, 0.72)', waterEdge: 'rgba(253, 224, 71, 0.55)',
+    pal: {
+      ruin: { top: '#4a2b29', left: '#331c1b', right: '#1f1010', highlight: 'rgba(251,146,60,0.28)' },
+      ruinDark: { top: '#361f20', left: '#241314', right: '#140a0b', highlight: 'rgba(249,115,22,0.20)' },
+      stone: { top: '#3a3035', left: '#261f24', right: '#171216', highlight: 'rgba(253,186,116,0.16)' },
+      dirt: { top: '#693424', left: '#4a2217', right: '#2e130c', highlight: 'rgba(251,146,60,0.22)' },
+      grass: { top: '#9a3412', left: '#4a2217', right: '#2e130c', overhangLeft: '#c2410c', overhangRight: '#7c2d12', highlight: 'rgba(253,224,71,0.35)' },
+      submerged: { top: '#451a12', left: '#2e100b', right: '#1c0906', highlight: 'rgba(251,146,60,0.16)' },
+    },
+  },
+  {
+    key: 'frost_citadel',
+    name: { th: 'ปราการเหมันต์นิรันดร์', en: 'GLACIAL CITADEL' },
+    skyTop: '#0d1e2e', skyMid: '#152e45', skyBot: '#07101a',
+    waterCol: 'rgba(14, 116, 144, 0.62)', waterEdge: 'rgba(186, 230, 253, 0.45)',
+    pal: {
+      ruin: { top: '#335c75', left: '#224054', right: '#142836', highlight: 'rgba(186,230,253,0.34)' },
+      ruinDark: { top: '#24465c', left: '#173040', right: '#0d1d29', highlight: 'rgba(125,211,252,0.22)' },
+      stone: { top: '#3b4e63', left: '#273545', right: '#18212c', highlight: 'rgba(224,242,254,0.24)' },
+      dirt: { top: '#4b5c6e', left: '#33404f', right: '#1f2833', highlight: 'rgba(186,230,253,0.18)' },
+      grass: { top: '#7dd3fc', left: '#33404f', right: '#1f2833', overhangLeft: '#38bdf8', overhangRight: '#0284c7', highlight: 'rgba(240,249,255,0.5)' },
+      submerged: { top: '#1e3a4c', left: '#122633', right: '#09151e', highlight: 'rgba(125,211,252,0.15)' },
+    },
+  },
+  {
+    key: 'storm_sanctum',
+    name: { th: 'วิหารพายุอัสนี', en: 'STORM VOID SANCTUM' },
+    skyTop: '#1a122b', skyMid: '#25183d', skyBot: '#0d0817',
+    waterCol: 'rgba(88, 28, 135, 0.58)', waterEdge: 'rgba(232, 121, 249, 0.42)',
+    pal: {
+      ruin: { top: '#3e2c5c', left: '#2a1d40', right: '#181026', highlight: 'rgba(216,180,254,0.28)' },
+      ruinDark: { top: '#2d1f45', left: '#1d132e', right: '#100a1c', highlight: 'rgba(192,132,252,0.20)' },
+      stone: { top: '#333047', left: '#211f30', right: '#14121f', highlight: 'rgba(233,213,255,0.16)' },
+      dirt: { top: '#4c3554', left: '#332238', right: '#1f1424', highlight: 'rgba(216,180,254,0.18)' },
+      grass: { top: '#7e22ce', left: '#332238', right: '#1f1424', overhangLeft: '#9333ea', overhangRight: '#581c87', highlight: 'rgba(245,208,254,0.38)' },
+      submerged: { top: '#281c3b', left: '#1a1126', right: '#0e0917', highlight: 'rgba(192,132,252,0.15)' },
+    },
+  },
+];
+
+const MONSTER_ELEMENTS = {
+  normal: { key: 'normal', prefix: '',       color: '#ef4444', hpMult: 1.0,  spdMult: 1.0,  dmgMult: 1.0 },
+  fire:   { key: 'fire',   prefix: 'Pyro ',  color: '#ff6a00', hpMult: 1.05, spdMult: 1.05, dmgMult: 1.2 },
+  ice:    { key: 'ice',    prefix: 'Frost ', color: '#22d3ee', hpMult: 1.30, spdMult: 0.90, dmgMult: 1.05 },
+  volt:   { key: 'volt',   prefix: 'Volt ',  color: '#c084fc', hpMult: 0.92, spdMult: 1.24, dmgMult: 1.15 },
+};
+
+const BOSS_VISUAL_FORMS = ['boss_overlord', 'boss_wyrm', 'boss_lich', 'boss_golem'];
+
+const TUNNEL_GATE = { x: 864, y: 42, r: 78 };
 
 const CONSTELLATION_NODES = [
   { id: 'sol_1', branch: 'SOLAR OVERLOAD', color: '#ff6a00', name: 'Cinder Edge', desc: '+18% Blade Damage & ignite burn per level', rank: 0, maxRank: 3, unlocked: false, keystone: false },
@@ -543,9 +946,9 @@ function getEffectiveCooldownScale() {
 function getEffectiveCritChance() {
   const p = gameState.player;
   if (!p) return 0.15;
-  let crit = 0.15 + getConstellationRank('sol_2') * 0.05;
+  let crit = 0.15 + getConstellationRank('sol_2') * 0.05 + (p.critBonus || 0);
   if (p.surgeTimer > 0) crit += 0.25;
-  return Math.min(0.85, crit);
+  return Math.min(0.90, crit);
 }
 
 function syncPlayerRelicMaxHp(healDelta = 0) {
@@ -561,7 +964,7 @@ function switchWeaponAspect(aspectKey) {
   const p = gameState.player;
   if (!p || !WEAPON_ASPECTS[aspectKey]) return;
   p.weaponAspect = aspectKey;
-  p.transformAnimTimer = aspectKey === 'volt' ? 1.4 : 0.75;
+  p.transformAnimTimer = aspectKey === 'volt' ? 1.45 : 1.15;
   p.transformAnimMax = p.transformAnimTimer;
   p.frostTrailTimer = 0;
   const asp = WEAPON_ASPECTS[aspectKey];
@@ -582,32 +985,113 @@ function switchWeaponAspect(aspectKey) {
       (aspectKey === 'volt' ? 'border-purple-300 text-purple-200' : 'text-slate-400');
   }
 
+  // 1. พื้นแตกเป็นรอยร้าวตามธาตุ
+  if (typeof addFloorDecal === 'function') {
+    addFloorDecal(p.x, p.y, 92, `crack_${aspectKey}`);
+  }
+
+  // 2. วงเวทย์ใต้เท้า + เอฟเฟกต์ประจำร่าง
   if (aspectKey === 'solar') {
     gameState.overdriveSigils.push({
       x: p.x,
       y: p.y,
-      r: 86,
+      r: 96,
       rot: 0,
-      life: 0.9,
-      maxLife: 0.9,
+      life: 1.1,
+      maxLife: 1.1,
       color: '#ff6a00',
       aspectTag: 'solar',
     });
+    spawnSparks(p.x, p.y, '#ff6a00', 26, 300);
+    spawnSparks(p.x, p.y, '#fef08a', 14, 240);
+    playCombatSfx('overdrive_roar', 1.05);
+  } else if (aspectKey === 'cryo') {
+    gameState.astralRings.push({
+      x: p.x,
+      y: p.y,
+      r: 108,
+      rot: 0,
+      spokes: 8,
+      color: '#22d3ee',
+      life: 1.05,
+      maxLife: 1.05,
+    });
+    for (let i = 0; i < 12; i++) {
+      const a = (i / 12) * Math.PI * 2;
+      gameState.iceShards.push({
+        x: p.x + Math.cos(a) * 18,
+        y: p.y + Math.sin(a) * 18,
+        vx: Math.cos(a) * 260,
+        vy: Math.sin(a) * 260,
+        rot: a,
+        size: 10,
+        life: 0.45,
+        maxLife: 0.45,
+      });
+    }
+    spawnSparks(p.x, p.y, '#67e8f9', 24, 260);
+    playCombatSfx('ice_burst', 1.12);
+  } else if (aspectKey === 'volt') {
+    if (typeof spawnLightningBranch === 'function') {
+      for (let b = 0; b < 4; b++) {
+        const ba = (b / 4) * Math.PI * 2 + Math.random() * 0.5;
+        spawnLightningBranch(p.x, p.y, p.x + Math.cos(ba) * 125, p.y + Math.sin(ba) * 125, '#e879f9', 3.0);
+      }
+    }
+    spawnSparks(p.x, p.y, '#e879f9', 28, 320);
+    playCombatSfx('volt_shock', 1.05);
   }
 
-  spawnSparks(p.x, p.y, asp.color, 18, 250);
   gameState.shockwaves.push({
     x: p.x,
     y: p.y,
-    r: 14,
-    maxR: 112,
-    life: 0.26,
-    maxLife: 0.26,
+    r: 16,
+    maxR: 155,
+    life: 0.34,
+    maxLife: 0.34,
     color: asp.color,
-    lineWidth: 3.5,
+    lineWidth: 5,
   });
-  addFloatingText(p.x, p.y - 32, asp.label, asp.core, 1.08);
-  playCombatSfx('surge', 1.08);
+  gameState.shockwaves.push({
+    x: p.x,
+    y: p.y,
+    r: 10,
+    maxR: 96,
+    life: 0.24,
+    maxLife: 0.24,
+    color: asp.core,
+    lineWidth: 3,
+  });
+
+  // 3. แปะเชื้อธาตุรอบตัว & เอฟเฟกต์พร Prismatic Shift (ดาเมจ AoE + ฮีล)
+  if (typeof applyElementalAura === 'function' && gameState.phase === 'playing') {
+    const burstEl = aspectKey === 'solar' ? 'fire' : aspectKey === 'cryo' ? 'ice' : 'volt';
+    const shiftLvl = p.shiftBurstLevel || 0;
+    const burstDmg = Math.round(
+      p.baseDamage * (0.75 + shiftLvl * 0.7) * (typeof getAttackMultiplier === 'function' ? getAttackMultiplier() : 1)
+    );
+    const nearbyFoes = gameState.boss && gameState.boss.hp > 0 ? [...gameState.enemies, gameState.boss] : gameState.enemies;
+    for (let i = nearbyFoes.length - 1; i >= 0; i--) {
+      const foe = nearbyFoes[i];
+      if (!foe || foe.hp <= 0) continue;
+      if (Math.hypot(foe.x - p.x, foe.y - p.y) <= 165 + foe.r) {
+        if (shiftLvl > 0 && typeof damageEnemy === 'function') {
+          damageEnemy(foe, burstDmg, 0, 0, true);
+        }
+        applyElementalAura(foe, burstEl, burstDmg);
+      }
+    }
+    if (shiftLvl > 0 && (p.shiftHealCd || 0) <= 0) {
+      const healAmt = 6 * shiftLvl;
+      p.hp = Math.min(p.maxHp, p.hp + healAmt);
+      p.shiftHealCd = 3.0;
+      addFloatingText(p.x, p.y - 52, `+${healAmt} HP`, '#38bdf8', 1.0);
+    }
+  }
+
+  if (typeof triggerDirectionalShake === 'function') triggerDirectionalShake(10.5);
+  gameState.chromaticTimer = 0.24;
+  addFloatingText(p.x, p.y - 38, asp.label, asp.core, 1.2);
 }
 
 function toggleArpgModal(kind) {
@@ -643,7 +1127,6 @@ function renderConstellationModal() {
   grid.innerHTML = '';
   grid.className = 'grid grid-cols-1 lg:grid-cols-12 gap-0 overflow-hidden border-2 border-[#5c3b16] bg-[#0c1018]';
 
-  // Helper: ไอคอน SVG ประจำแต่ละโหนด
   const getNodeIconSvg = (id, color) => {
     const icons = {
       sol_1: `<path d="M-8,8 L6,-6 M2,-8 L8,-8 L8,-2 M-5,2 L-1,6" stroke="${color}" stroke-width="2.4" fill="none" stroke-linecap="square"/>`,
@@ -659,7 +1142,6 @@ function renderConstellationModal() {
     return icons[id] || `<circle cx="0" cy="0" r="5" fill="${color}"/>`;
   };
 
-  // Helper: ข้อความเปรียบเทียบ Lv.ปัจจุบัน vs Lv.ถัดไป (ไฮไลต์ตัวเลขสีส้มทอง)
   const getLevelDescHtml = (node, lv) => {
     const effLv = Math.max(1, lv);
     const hl = (txt) => `<span class="text-amber-400 font-bold">${txt}</span>`;
@@ -675,9 +1157,6 @@ function renderConstellationModal() {
     return node.desc;
   };
 
-  // =========================================================================
-  // 1. LEFT / CENTER: SYMMETRICAL TRACE MAP + OBSIDIAN CREST WATERMARK
-  // =========================================================================
   const webWrapper = document.createElement('div');
   webWrapper.className =
     'lg:col-span-8 relative overflow-hidden flex items-center justify-center min-h-[450px] p-2 bg-[radial-gradient(circle_at_50%_48%,#232938_0%,#111520_58%,#080b12_100%)]';
@@ -812,9 +1291,6 @@ function renderConstellationModal() {
     });
   });
 
-  // =========================================================================
-  // 2. RIGHT SIDE: CLEAN INSPECTOR PANEL (Lv.CURRENT vs Lv.NEXT)
-  // =========================================================================
   const inspNode = CONSTELLATION_NODES.find((n) => n.id === selectedConstellationId) || CONSTELLATION_NODES[0];
   const curRank = inspNode.rank || (inspNode.unlocked ? 1 : 0);
   const maxR = inspNode.maxRank || 1;
