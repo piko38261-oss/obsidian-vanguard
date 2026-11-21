@@ -1,6 +1,7 @@
 /**
  * =========================================================================
  * OBSIDIAN VANGUARD // ARPG — GOTHIC-CYBERPUNK 2D ACTION RPG ENGINE
+ * EXPANDED MULTI-BIOME SANCTUM EDITION (2880x2176)
  * =========================================================================
  */
 
@@ -147,7 +148,7 @@ function setLanguage(lang) {
       el.textContent = dict[key];
     }
   });
-  if (gameState.phase === 'upgrade') {
+  if (typeof gameState !== 'undefined' && gameState.phase === 'upgrade' && typeof renderUpgradeChoices === 'function') {
     renderUpgradeChoices(gameState.pendingUpgrades);
   }
 }
@@ -505,7 +506,7 @@ function playCombatSfx(type, pitchScale = 1) {
   if (!ctx || sfx.muted) return;
   try {
     const now = ctx.currentTime;
-    const asp = (gameState.player && gameState.player.weaponAspect) || 'solar';
+    const asp = (typeof gameState !== 'undefined' && gameState.player && gameState.player.weaponAspect) || 'solar';
     const microJitter = 0.94 + Math.random() * 0.12;
     const pScale = pitchScale * microJitter;
 
@@ -570,27 +571,98 @@ function playCombatSfx(type, pitchScale = 1) {
 }
 
 // -------------------------------------------------------------------------
-// 3. SANCTUM ENVIRONMENT, 15 MULTI-BRANCH BLESSINGS & CANVAS HANDLES
+// 3. EXPANDED SANCTUM MAP (2880x2176), TACTICAL COVERS, POOLS, SHRINES & BLESSINGS
 // -------------------------------------------------------------------------
-const ARENA_W = 1920;
-const ARENA_H = 1360;
+const ARENA_W = 2880;
+const ARENA_H = 2176;
 
-const PILLARS = [
-  { x: 560, y: 420, r: 44, phase: 0.2 },
-  { x: 1360, y: 420, r: 44, phase: 1.7 },
-  { x: 560, y: 940, r: 44, phase: 3.1 },
-  { x: 1360, y: 940, r: 44, phase: 4.5 },
-  { x: 960, y: 680, r: 34, phase: 2.3 },
-];
+const TUNNEL_GATE = { x: ARENA_W * 0.5, y: 96, r: 68 };
 
-const THERMAL_VENTS = [
-  { x: 340, y: 260, r: 78, phase: 0.0 },
-  { x: 1580, y: 260, r: 78, phase: 1.4 },
-  { x: 340, y: 1100, r: 78, phase: 2.8 },
-  { x: 1580, y: 1100, r: 78, phase: 4.2 },
-  { x: 960, y: 310, r: 92, phase: 0.9 },
-  { x: 960, y: 1050, r: 92, phase: 3.7 },
-];
+const PILLARS = [];
+const THERMAL_VENTS = [];
+const MAP_POOLS = [];
+const MAP_SHRINES = [];
+const MAP_DECOR = [];
+
+function buildBiomeMapLayout(biomeIdx = 0) {
+  PILLARS.length = 0;
+  THERMAL_VENTS.length = 0;
+  MAP_POOLS.length = 0;
+  MAP_SHRINES.length = 0;
+  MAP_DECOR.length = 0;
+
+  const b = biomeIdx % 4; // 0: Canyon Ruins, 1: Molten Caldera, 2: Frost Citadel, 3: Storm Sanctum
+  const cx = ARENA_W * 0.5;
+  const cy = ARENA_H * 0.5;
+
+  // 1. เสาไฟหลัก 4 มุมลานกลาง (Landmark + แสงสว่าง + กำบังระยะกลาง)
+  [[-360, -270], [360, -270], [-360, 270], [360, 270]].forEach(([ox, oy], i) => {
+    PILLARS.push({
+      x: cx + ox,
+      y: cy + oy,
+      r: 30,
+      phase: i * 1.4,
+      kind: b === 2 ? 'frost_torch' : 'brazier',
+    });
+  });
+
+  // 2. แนวกำบังยุทธวิธี 6 แบบตามไบโอม (ใช้หลบกระสุนและล่อบอส/Juggernaut ชน)
+  const tacticalCover = [
+    { x: cx - 780, y: cy - 360, r: 42, kind: b === 1 ? 'volcano_rock' : b === 2 ? 'ice_pillar' : 'ruin_arch' },
+    { x: cx - 860, y: cy + 40,  r: 36, kind: b === 1 ? 'fire_pit'     : b === 2 ? 'ice_pillar' : 'crystal_cluster' },
+    { x: cx - 640, y: cy + 480, r: 44, kind: b === 1 ? 'volcano_rock' : b === 2 ? 'ice_pillar' : 'ruin_arch' },
+
+    { x: cx + 780, y: cy - 360, r: 42, kind: b === 1 ? 'volcano_rock' : b === 2 ? 'ice_pillar' : 'ruin_arch' },
+    { x: cx + 860, y: cy + 40,  r: 36, kind: b === 1 ? 'fire_pit'     : b === 2 ? 'ice_pillar' : 'crystal_cluster' },
+    { x: cx + 640, y: cy + 480, r: 44, kind: b === 1 ? 'volcano_rock' : b === 2 ? 'ice_pillar' : 'ruin_arch' },
+
+    { x: cx - 320, y: cy - 660, r: 38, kind: b === 1 ? 'volcano_rock' : b === 2 ? 'ice_pillar' : 'crystal_cluster' },
+    { x: cx + 320, y: cy - 660, r: 38, kind: b === 1 ? 'volcano_rock' : b === 2 ? 'ice_pillar' : 'crystal_cluster' },
+    { x: cx - 280, y: cy + 680, r: 38, kind: b === 1 ? 'fire_pit'     : b === 2 ? 'ice_pillar' : 'ruin_arch' },
+    { x: cx + 280, y: cy + 680, r: 38, kind: b === 1 ? 'fire_pit'     : b === 2 ? 'ice_pillar' : 'ruin_arch' },
+
+    { x: 420,           y: 420,           r: 46, kind: b === 2 ? 'ice_pillar' : 'volcano_rock' },
+    { x: ARENA_W - 420, y: 420,           r: 46, kind: b === 2 ? 'ice_pillar' : 'volcano_rock' },
+    { x: 440,           y: ARENA_H - 420, r: 46, kind: b === 0 ? 'crystal_cluster' : b === 2 ? 'ice_pillar' : 'volcano_rock' },
+    { x: ARENA_W - 440, y: ARENA_H - 420, r: 46, kind: b === 0 ? 'crystal_cluster' : b === 2 ? 'ice_pillar' : 'volcano_rock' },
+  ];
+  tacticalCover.forEach((c, idx) => PILLARS.push({ ...c, phase: idx * 0.9 + b }));
+
+  // 3. ปล่องความร้อน (Thermal Vents)
+  [[cx - 560, cy], [cx + 560, cy], [cx, cy - 480], [cx, cy + 480]].forEach(([vx, vy]) => {
+    THERMAL_VENTS.push({ x: vx, y: vy, r: 36 });
+  });
+
+  // 4. บ่อธาตุ 3 จุด
+  const poolKind = b === 1 ? 'lava' : b === 2 ? 'ice' : b === 3 ? 'void' : 'turquoise';
+  MAP_POOLS.push(
+    { x: 560,           y: cy - 120, rx: 135, ry: 95,  kind: poolKind },
+    { x: ARENA_W - 560, y: cy + 140, rx: 140, ry: 100, kind: poolKind },
+    { x: cx,            y: cy + 780, rx: 165, ry: 90,  kind: poolKind }
+  );
+
+  // 5. จุดสำรวจประจำห้อง 3 จุดตามมุมแมพ
+  MAP_SHRINES.push(
+    { x: 280,           y: 300,           r: 36, kind: 'heal_spring', label: 'SANCTUM SPRING', used: false, phase: 0.4 },
+    { x: ARENA_W - 280, y: 310,           r: 36, kind: 'ember_altar', label: 'SURGE ALTAR',    used: false, phase: 1.8 },
+    { x: ARENA_W - 300, y: ARENA_H - 290, r: 36, kind: 'shard_cache', label: 'RELIC CRYSTAL',  used: false, phase: 3.1 }
+  );
+
+  // 6. พร็อพตกแต่งขอบแมพที่ไม่ขวางทางเดิน
+  for (let i = 0; i < 38; i++) {
+    const a = (i / 38) * Math.PI * 2;
+    const dx = Math.max(120, Math.min(ARENA_W - 120, cx + Math.cos(a) * (ARENA_W * 0.44 + ((i * 37) % 120) - 60)));
+    const dy = Math.max(150, Math.min(ARENA_H - 120, cy + Math.sin(a) * (ARENA_H * 0.43 + ((i * 53) % 110) - 55)));
+    MAP_DECOR.push({
+      x: dx,
+      y: dy,
+      kind: b === 2 ? 'ice_bush' : b === 0 ? 'amber_sprout' : 'pine_tuft',
+      phase: i * 0.7,
+    });
+  }
+}
+window.buildBiomeMapLayout = buildBiomeMapLayout;
+buildBiomeMapLayout(0);
 
 const RELIC_POOL = [
   // --- 1. BLADE (สายดาบ & คริติคอล) ---
@@ -882,8 +954,6 @@ const MONSTER_ELEMENTS = {
 
 const BOSS_VISUAL_FORMS = ['boss_overlord', 'boss_wyrm', 'boss_lich', 'boss_golem'];
 
-const TUNNEL_GATE = { x: 864, y: 42, r: 78 };
-
 const CONSTELLATION_NODES = [
   { id: 'sol_1', branch: 'SOLAR OVERLOAD', color: '#ff6a00', name: 'Cinder Edge', desc: '+18% Blade Damage & ignite burn per level', rank: 0, maxRank: 3, unlocked: false, keystone: false },
   { id: 'sol_2', branch: 'SOLAR OVERLOAD', color: '#ff6a00', name: 'Sunfire Vigor', desc: '+25 Max HP & +5% Crit chance per level', rank: 0, maxRank: 3, unlocked: false, keystone: false },
@@ -931,20 +1001,20 @@ function rollArpgRelic(forcedRarity = null) {
 }
 
 function getEquippedRelicStat(stat) {
-  const p = gameState.player;
+  const p = typeof gameState !== 'undefined' ? gameState.player : null;
   if (!p || !Array.isArray(p.equippedRelics)) return 0;
   return p.equippedRelics.filter((item) => item.stat === stat).reduce((acc, item) => acc + item.val, 0);
 }
 
 function getEffectiveCooldownScale() {
-  const p = gameState.player;
+  const p = typeof gameState !== 'undefined' ? gameState.player : null;
   if (!p) return 1.0;
   const cdrPct = Math.min(45, getEquippedRelicStat('cdr'));
   return Math.max(0.35, (p.cdScale || 1.0) * (1 - cdrPct / 100));
 }
 
 function getEffectiveCritChance() {
-  const p = gameState.player;
+  const p = typeof gameState !== 'undefined' ? gameState.player : null;
   if (!p) return 0.15;
   let crit = 0.15 + getConstellationRank('sol_2') * 0.05 + (p.critBonus || 0);
   if (p.surgeTimer > 0) crit += 0.25;
@@ -952,7 +1022,7 @@ function getEffectiveCritChance() {
 }
 
 function syncPlayerRelicMaxHp(healDelta = 0) {
-  const p = gameState.player;
+  const p = typeof gameState !== 'undefined' ? gameState.player : null;
   if (!p) return;
   const baseMax = 100 + getConstellationRank('sol_2') * 25 + (p.blessingHpBonus || 0);
   const relicHp = getEquippedRelicStat('hp');
@@ -961,7 +1031,7 @@ function syncPlayerRelicMaxHp(healDelta = 0) {
 }
 
 function switchWeaponAspect(aspectKey) {
-  const p = gameState.player;
+  const p = typeof gameState !== 'undefined' ? gameState.player : null;
   if (!p || !WEAPON_ASPECTS[aspectKey]) return;
   p.weaponAspect = aspectKey;
   p.transformAnimTimer = aspectKey === 'volt' ? 1.45 : 1.15;
@@ -985,36 +1055,22 @@ function switchWeaponAspect(aspectKey) {
       (aspectKey === 'volt' ? 'border-purple-300 text-purple-200' : 'text-slate-400');
   }
 
-  // 1. พื้นแตกเป็นรอยร้าวตามธาตุ
   if (typeof addFloorDecal === 'function') {
     addFloorDecal(p.x, p.y, 92, `crack_${aspectKey}`);
   }
 
-  // 2. วงเวทย์ใต้เท้า + เอฟเฟกต์ประจำร่าง
   if (aspectKey === 'solar') {
     gameState.overdriveSigils.push({
-      x: p.x,
-      y: p.y,
-      r: 96,
-      rot: 0,
-      life: 1.1,
-      maxLife: 1.1,
-      color: '#ff6a00',
-      aspectTag: 'solar',
+      x: p.x, y: p.y, r: 96, rot: 0, life: 1.1, maxLife: 1.1, color: '#ff6a00', aspectTag: 'solar',
     });
-    spawnSparks(p.x, p.y, '#ff6a00', 26, 300);
-    spawnSparks(p.x, p.y, '#fef08a', 14, 240);
+    if (typeof spawnSparks === 'function') {
+      spawnSparks(p.x, p.y, '#ff6a00', 26, 300);
+      spawnSparks(p.x, p.y, '#fef08a', 14, 240);
+    }
     playCombatSfx('overdrive_roar', 1.05);
   } else if (aspectKey === 'cryo') {
     gameState.astralRings.push({
-      x: p.x,
-      y: p.y,
-      r: 108,
-      rot: 0,
-      spokes: 8,
-      color: '#22d3ee',
-      life: 1.05,
-      maxLife: 1.05,
+      x: p.x, y: p.y, r: 108, rot: 0, spokes: 8, color: '#22d3ee', life: 1.05, maxLife: 1.05,
     });
     for (let i = 0; i < 12; i++) {
       const a = (i / 12) * Math.PI * 2;
@@ -1029,7 +1085,7 @@ function switchWeaponAspect(aspectKey) {
         maxLife: 0.45,
       });
     }
-    spawnSparks(p.x, p.y, '#67e8f9', 24, 260);
+    if (typeof spawnSparks === 'function') spawnSparks(p.x, p.y, '#67e8f9', 24, 260);
     playCombatSfx('ice_burst', 1.12);
   } else if (aspectKey === 'volt') {
     if (typeof spawnLightningBranch === 'function') {
@@ -1038,32 +1094,17 @@ function switchWeaponAspect(aspectKey) {
         spawnLightningBranch(p.x, p.y, p.x + Math.cos(ba) * 125, p.y + Math.sin(ba) * 125, '#e879f9', 3.0);
       }
     }
-    spawnSparks(p.x, p.y, '#e879f9', 28, 320);
+    if (typeof spawnSparks === 'function') spawnSparks(p.x, p.y, '#e879f9', 28, 320);
     playCombatSfx('volt_shock', 1.05);
   }
 
   gameState.shockwaves.push({
-    x: p.x,
-    y: p.y,
-    r: 16,
-    maxR: 155,
-    life: 0.34,
-    maxLife: 0.34,
-    color: asp.color,
-    lineWidth: 5,
+    x: p.x, y: p.y, r: 16, maxR: 155, life: 0.34, maxLife: 0.34, color: asp.color, lineWidth: 5,
   });
   gameState.shockwaves.push({
-    x: p.x,
-    y: p.y,
-    r: 10,
-    maxR: 96,
-    life: 0.24,
-    maxLife: 0.24,
-    color: asp.core,
-    lineWidth: 3,
+    x: p.x, y: p.y, r: 10, maxR: 96, life: 0.24, maxLife: 0.24, color: asp.core, lineWidth: 3,
   });
 
-  // 3. แปะเชื้อธาตุรอบตัว & เอฟเฟกต์พร Prismatic Shift (ดาเมจ AoE + ฮีล)
   if (typeof applyElementalAura === 'function' && gameState.phase === 'playing') {
     const burstEl = aspectKey === 'solar' ? 'fire' : aspectKey === 'cryo' ? 'ice' : 'volt';
     const shiftLvl = p.shiftBurstLevel || 0;
@@ -1085,17 +1126,17 @@ function switchWeaponAspect(aspectKey) {
       const healAmt = 6 * shiftLvl;
       p.hp = Math.min(p.maxHp, p.hp + healAmt);
       p.shiftHealCd = 3.0;
-      addFloatingText(p.x, p.y - 52, `+${healAmt} HP`, '#38bdf8', 1.0);
+      if (typeof addFloatingText === 'function') addFloatingText(p.x, p.y - 52, `+${healAmt} HP`, '#38bdf8', 1.0);
     }
   }
 
   if (typeof triggerDirectionalShake === 'function') triggerDirectionalShake(10.5);
   gameState.chromaticTimer = 0.24;
-  addFloatingText(p.x, p.y - 38, asp.label, asp.core, 1.2);
+  if (typeof addFloatingText === 'function') addFloatingText(p.x, p.y - 38, asp.label, asp.core, 1.2);
 }
 
 function toggleArpgModal(kind) {
-  if (gameState.phase !== 'playing' && gameState.phase !== 'arpg_pause') return;
+  if (typeof gameState === 'undefined' || (gameState.phase !== 'playing' && gameState.phase !== 'arpg_pause')) return;
   const treeEl = document.getElementById('overlay-tree');
   const forgeEl = document.getElementById('overlay-forge');
   const targetEl = kind === 'tree' ? treeEl : forgeEl;
@@ -1359,7 +1400,7 @@ function renderConstellationModal() {
         p.cdScale = Math.max(0.5, p.cdScale * 0.88);
       }
       playCombatSfx('pickup', 1.25);
-      syncHudDom();
+      if (typeof syncHudDom === 'function') syncHudDom();
       renderConstellationModal();
     });
   }
@@ -1407,7 +1448,7 @@ function renderForgeModal() {
         p.inventoryRelics.push(rel);
         syncPlayerRelicMaxHp(0);
         renderForgeModal();
-        syncHudDom();
+        if (typeof syncHudDom === 'function') syncHudDom();
       });
       row.appendChild(unequipBtn);
       eqList.appendChild(row);
@@ -1444,7 +1485,7 @@ function renderForgeModal() {
         syncPlayerRelicMaxHp(rel.stat === 'hp' ? rel.val : 0);
         playCombatSfx('pickup', 1.1);
         renderForgeModal();
-        syncHudDom();
+        if (typeof syncHudDom === 'function') syncHudDom();
       });
 
       const salBtn = document.createElement('button');
@@ -1456,7 +1497,7 @@ function renderForgeModal() {
         p.shards = (p.shards || 0) + 8;
         playCombatSfx('hit', 1.2);
         renderForgeModal();
-        syncHudDom();
+        if (typeof syncHudDom === 'function') syncHudDom();
       });
 
       actRow.appendChild(eqBtn);

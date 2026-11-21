@@ -1,1660 +1,2030 @@
+// =========================================================================
+// 8. CORE COMBAT, AI, ELEMENTAL REACTIONS, SHRINES & TACTICAL COVER ENGINE
+//    OBSIDIAN VANGUARD — FULL EXPANDED MULTI-BIOME SANCTUM EDITION
+//    + INTEGRATED WAVE BLESSINGS MODAL, GAME OVER SAVE SYNC & main.js BRIDGE
+// =========================================================================
+
+// -------------------------------------------------------------------------
+// 8.0 SANCTUM HALL LOBBY CONFIGURATION (GOTHIC HUB BEFORE DUNGEON WARP)
+// -------------------------------------------------------------------------
+const LOBBY_W = 1280;
+const LOBBY_H = 1024;
+const LOBBY_SPAWN = { x: 640, y: 810 };
+const LOBBY_PORTAL = { x: 640, y: 175, r: 72 };
+const LOBBY_DUMMY_POS = { x: 640, y: 500 };
+
+const LOBBY_STATIONS = [
+  { x: 250, y: 470, r: 54, kind: 'tree',  label: 'CONSTELLATION [F]', color: '#38bdf8' },
+  { x: 1030, y: 470, r: 54, kind: 'forge', label: 'OBSIDIAN FORGE [F]', color: '#fbbf24' },
+];
+
+const LOBBY_PILLARS = [
+  { x: 350, y: 270, r: 26, phase: 0.4, kind: 'brazier' },
+  { x: 930, y: 270, r: 26, phase: 1.8, kind: 'brazier' },
+  { x: 310, y: 690, r: 26, phase: 3.1, kind: 'brazier' },
+  { x: 970, y: 690, r: 26, phase: 4.5, kind: 'brazier' },
+];
+
+window.LOBBY_W = LOBBY_W;
+window.LOBBY_H = LOBBY_H;
+window.LOBBY_PORTAL = LOBBY_PORTAL;
+window.LOBBY_STATIONS = LOBBY_STATIONS;
+window.LOBBY_PILLARS = LOBBY_PILLARS;
+
 const gameState = {
-  phase: 'title', // 'title' | 'playing' | 'upgrade' | 'paused' | 'gameover' | 'arpg_pause'
-  wave: 1,
-  score: 0,
-  kills: 0,
-  combo: 0,
-  comboTimer: 0,
-  hitstopTimer: 0,
-  shakeMag: 0,
-  shakeDirX: 0,
-  shakeDirY: 0,
-  chromaticTimer: 0,
+  zone: 'lobby', // 'lobby' | 'dungeon'
+  transitionTargetZone: null,
+  phase: 'title', // 'title' | 'playing' | 'paused' | 'upgrade' | 'arpg_pause' | 'gameover'
   worldTime: 0,
+  wave: 1,
   biomeIndex: 0,
+  lastBossForm: '',
+  score: 0,
+  combo: 0,
+  maxCombo: 0,
+  comboTimer: 0,
+  kills: 0,
+  bossesDefeated: 0,
+  reactionsTriggered: 0,
+  shrinesCollected: 0,
   portalOpen: false,
   transitionTimer: 0,
   transitionSwapped: false,
-  lastBossForm: null,
-  waveSpawnQueue: [],
-  waveSpawnTimer: 0,
+  hitstopTimer: 0,
+  chromaticTimer: 0,
+  shakeMag: 0,
+  shakeDirX: 0,
+  shakeDirY: 0,
+  ventCycleTimer: 0,
   pendingUpgrades: [],
   camera: { x: ARENA_W * 0.5, y: ARENA_H * 0.5 },
-  mouseScreen: { x: 640, y: 360 },
-  mouseWorld: { x: ARENA_W * 0.5 + 100, y: ARENA_H * 0.5 },
+  mouseScreen: { x: 0, y: 0 },
+  mouseWorld: { x: ARENA_W * 0.5, y: ARENA_H * 0.5 },
   keys: new Set(),
+  mouseDown: false,
   player: null,
-  boss: null,
   enemies: [],
-  enemyProjectiles: [],
-  playerBolts: [],
-  slashes: [],
-  bladeRibbons: [],
-  lightningArcs: [],
-  iceShards: [],
-  dissolvingCorpses: [],
-  brazierSmoke: [],
-  shockwaves: [],
-  astralRings: [],
-  overdriveSigils: [],
-  vortexCores: [],
-  slashCrescents: [],
-  afterimages: [],
-  sparks: [],
+  boss: null,
+
+  // Effect Arrays (ซิงก์ครบกับ js/renderer.js)
   floorDecals: [],
-  ambientEmbers: [],
   loots: [],
+  dissolvingCorpses: [],
+  afterimages: [],
+  slashCrescents: [],
+  slashes: [],
+  overdriveSigils: [],
+  astralRings: [],
+  shockwaves: [],
+  lightningArcs: [],
+  playerBolts: [],
+  enemyProjectiles: [],
+  iceShards: [],
+  sparks: [],
+  brazierSmoke: [],
+  ambientEmbers: [],
   floatingTexts: [],
-  combatLog: [],
 };
 
-function initAmbientEmbers() {
-  gameState.ambientEmbers = Array.from({ length: 55 }, () => ({
-    x: Math.random() * ARENA_W,
-    y: Math.random() * ARENA_H,
-    vx: -12 + Math.random() * 24,
-    vy: -18 - Math.random() * 26,
-    r: 1.2 + Math.random() * 2.2,
-    phase: Math.random() * Math.PI * 2,
-    cyan: Math.random() < 0.22,
-  }));
+// -------------------------------------------------------------------------
+// 8A. INPUT, PAUSE, MATH, COLLISION & AUDIO/UI HELPERS
+// -------------------------------------------------------------------------
+function clamp(v, min, max) {
+  return Math.max(min, Math.min(max, v));
 }
 
-function addFloorDecal(x, y, radius, kind = 'scorch') {
-  if (gameState.floorDecals.length >= 120) {
-    gameState.floorDecals.shift();
+function randRange(min, max) {
+  return min + Math.random() * (max - min);
+}
+
+function angleDiff(a, b) {
+  let d = a - b;
+  while (d > Math.PI) d -= Math.PI * 2;
+  while (d < -Math.PI) d += Math.PI * 2;
+  return d;
+}
+
+function isKeyPressed(...candidates) {
+  const k = gameState.keys;
+  if (!k) return false;
+  if (typeof k.has === 'function') {
+    for (let i = 0; i < candidates.length; i++) {
+      if (k.has(candidates[i])) return true;
+    }
+    return false;
   }
-  const maxLife = String(kind).startsWith('crack_') ? 6.5 : kind === 'frost' ? 3.2 : 14.0;
-  gameState.floorDecals.push({
-    x,
-    y,
-    r: radius,
-    kind, // 'scorch' | 'frost' | 'shock' | 'crack_solar' | 'crack_cryo' | 'crack_volt'
-    rot: Math.random() * Math.PI * 2,
-    life: maxLife,
-    maxLife,
-    alpha: 0.55,
+  for (let i = 0; i < candidates.length; i++) {
+    if (k[candidates[i]]) return true;
+  }
+  return false;
+}
+
+function togglePause() {
+  if (gameState.phase !== 'playing' && gameState.phase !== 'paused') return;
+  const pauseEl =
+    document.getElementById('overlay-pause') ||
+    document.getElementById('pause-overlay') ||
+    document.getElementById('pause-modal') ||
+    document.getElementById('screen-pause') ||
+    document.getElementById('pause-screen');
+
+  if (gameState.phase === 'playing') {
+    gameState.phase = 'paused';
+    gameState.mouseDown = false;
+    if (gameState.keys && typeof gameState.keys.clear === 'function') {
+      gameState.keys.clear();
+    }
+    if (pauseEl) pauseEl.classList.remove('hidden');
+  } else {
+    gameState.phase = 'playing';
+    if (pauseEl) pauseEl.classList.add('hidden');
+  }
+}
+window.togglePause = togglePause;
+
+function playSfx(methodName, ...args) {
+  // รองรับทั้งระบบ playCombatSfx / playMusicStinger ใน config.js และ AudioEngine
+  if (typeof playCombatSfx === 'function') {
+    if (methodName === 'playSlash') { playCombatSfx('cleave', 1.0); return; }
+    if (methodName === 'playDash') { playCombatSfx('dodge', 1.0); return; }
+    if (methodName === 'playHit') { playCombatSfx('hit', args[0] ? 1.25 : 1.0); return; }
+    if (methodName === 'playPlayerHurt') { playCombatSfx('hurt', 1.0); return; }
+    if (methodName === 'playPickup') { playCombatSfx('pickup', 1.05); return; }
+    if (methodName === 'playOverdrive') { playCombatSfx('overdrive_roar', 1.0); return; }
+    if (methodName === 'playPortal') { playCombatSfx('surge', 1.1); return; }
+    if (methodName === 'playTransform') {
+      const asp = args[0] || 'solar';
+      playCombatSfx(asp === 'cryo' ? 'ice_burst' : asp === 'volt' ? 'volt_shock' : 'overdrive_roar', 1.05);
+      return;
+    }
+    if (methodName === 'playSkill') {
+      const sk = args[0];
+      playCombatSfx(sk === 'lance' ? 'lance' : sk === 'cataclysm' ? 'beam' : 'nova', 1.0);
+      return;
+    }
+    if (methodName === 'playReaction') {
+      const rk = args[0];
+      playCombatSfx(rk === 'superconduct' ? 'volt_shock' : rk === 'melt' ? 'ice_burst' : 'nova', 1.15);
+      return;
+    }
+  }
+  if (typeof playMusicStinger === 'function' && methodName === 'setMusicIntensity') {
+    if (args[0] === 'boss') playMusicStinger('boss_intro');
+    else if (args[0] === 'boss_enrage') playMusicStinger('boss_phase2');
+    else if (args[0] === 'boss_victory') playMusicStinger('boss_victory');
+    return;
+  }
+  if (typeof AudioEngine !== 'undefined' && AudioEngine && typeof AudioEngine[methodName] === 'function') {
+    try {
+      AudioEngine[methodName](...args);
+    } catch (_) {}
+  }
+}
+
+function pushCombatLog(msg, color = '#94a3b8') {
+  if (typeof addCombatLog === 'function') {
+    addCombatLog(msg, color);
+    return;
+  }
+  const feed = document.getElementById('combat-log') || document.getElementById('hud-combat-log');
+  if (feed) {
+    const line = document.createElement('div');
+    line.style.color = color;
+    line.textContent = `> ${msg}`;
+    feed.prepend(line);
+    while (feed.children.length > 6) feed.lastElementChild.remove();
+  }
+}
+
+function getEffectiveCooldownScale() {
+  const p = gameState.player;
+  if (!p) return 1;
+  const baseScale = typeof p.cooldownScale === 'number' ? p.cooldownScale : (p.cdScale || 1);
+  const relicCdr = typeof getEquippedRelicStat === 'function' ? Math.min(45, getEquippedRelicStat('cdr')) : 0;
+  const overdriveBonus = p.surgeTimer > 0 ? 0.72 : 1;
+  return Math.max(0.38, baseScale * (1 - relicCdr / 100) * overdriveBonus);
+}
+
+function getPlayerDamageMult() {
+  const p = gameState.player;
+  if (!p) return 1;
+  const forgeMult = 1 + (p.forgeLevel || 0) * 0.16;
+  const boonMult = typeof p.dmgMult === 'number' ? p.dmgMult : 1;
+  const relicDmg = typeof getEquippedRelicStat === 'function' ? 1 + getEquippedRelicStat('dmg') / 100 : 1;
+  const constDmg = typeof getConstellationRank === 'function' ? 1 + getConstellationRank('sol_1') * 0.18 : 1;
+  const overdriveMult = p.surgeTimer > 0 ? 1.45 : 1;
+  const shrineMult = (p.shrineFuryTimer || 0) > 0 ? 1.18 : 1;
+  return forgeMult * boonMult * relicDmg * constDmg * overdriveMult * shrineMult;
+}
+window.getAttackMultiplier = getPlayerDamageMult;
+
+function getPlayerMoveSpeed() {
+  const p = gameState.player;
+  if (!p) return 268;
+  const aspKey = p.weaponAspect || 'solar';
+  const aspSpeed = aspKey === 'volt' ? 1.18 : aspKey === 'cryo' ? 0.98 : 1.02;
+  const boonSpeed = typeof p.speedMult === 'number' ? p.speedMult : 1;
+  const overdriveSpeed = p.surgeTimer > 0 ? 1.16 : 1;
+  const voltBurst = (p.voltHasteTimer || 0) > 0 ? 1.2 : 1;
+  return (p.moveSpeed || 268) * aspSpeed * boonSpeed * overdriveSpeed * voltBurst;
+}
+
+function getAllActiveFoes() {
+  return gameState.boss && gameState.boss.hp > 0
+    ? [...gameState.enemies, gameState.boss]
+    : gameState.enemies;
+}
+
+function resolveEntityArenaAndPillars(ent, pad = 64) {
+  let hitPillar = null;
+  const isLobby = gameState.zone === 'lobby';
+  const maxW = isLobby ? LOBBY_W : ARENA_W;
+  const maxH = isLobby ? LOBBY_H : ARENA_H;
+  const effPad = isLobby ? 115 : pad;
+  ent.x = clamp(ent.x, effPad, maxW - effPad);
+  ent.y = clamp(ent.y, isLobby ? 135 : pad + 24, maxH - (isLobby ? 105 : pad));
+
+  const activePillars = isLobby ? LOBBY_PILLARS : (typeof PILLARS !== 'undefined' ? PILLARS : []);
+  for (let i = 0; i < activePillars.length; i++) {
+    const pil = activePillars[i];
+    const minDist = (ent.r || 18) + (pil.r || 30);
+    const dx = ent.x - pil.x;
+    const dy = ent.y - pil.y;
+    const d = Math.hypot(dx, dy);
+    if (d < minDist) {
+      const nx = d > 0.001 ? dx / d : 1;
+      const ny = d > 0.001 ? dy / d : 0;
+      ent.x = pil.x + nx * minDist;
+      ent.y = pil.y + ny * minDist;
+      hitPillar = pil;
+    }
+  }
+  return hitPillar;
+}
+
+function checkProjectileHitPillar(x, y, r = 6) {
+  const activePillars = gameState.zone === 'lobby' ? LOBBY_PILLARS : (typeof PILLARS !== 'undefined' ? PILLARS : []);
+  for (let i = 0; i < activePillars.length; i++) {
+    const pil = activePillars[i];
+    if (Math.hypot(x - pil.x, y - pil.y) < (pil.r || 30) + r) {
+      return pil;
+    }
+  }
+  return null;
+}
+
+function hasLineOfSight(x1, y1, x2, y2) {
+  if (typeof PILLARS === 'undefined' || PILLARS.length === 0) return true;
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+  const lenSq = dx * dx + dy * dy;
+  if (lenSq < 1) return true;
+
+  for (let i = 0; i < PILLARS.length; i++) {
+    const pil = PILLARS[i];
+    const t = clamp(((pil.x - x1) * dx + (pil.y - y1) * dy) / lenSq, 0, 1);
+    const px = x1 + t * dx;
+    const py = y1 + t * dy;
+    const blockR = (pil.r || 30) * 0.88;
+    if (Math.hypot(px - pil.x, py - pil.y) < blockR) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// -------------------------------------------------------------------------
+// 8B. VFX & FEEDBACK SPAWNERS
+// -------------------------------------------------------------------------
+function addCameraShake(mag, dirX = 0, dirY = 0) {
+  if (mag > gameState.shakeMag) {
+    gameState.shakeMag = Math.min(26, mag);
+    const len = Math.hypot(dirX, dirY);
+    gameState.shakeDirX = len > 0.01 ? dirX / len : (Math.random() - 0.5);
+    gameState.shakeDirY = len > 0.01 ? dirY / len : (Math.random() - 0.5);
+  }
+}
+window.triggerDirectionalShake = addCameraShake;
+
+function triggerHitstop(duration) {
+  gameState.hitstopTimer = Math.max(gameState.hitstopTimer, Math.min(0.11, duration));
+}
+
+function spawnFloatingText(x, y, text, color = '#ffffff', scale = 1) {
+  if (gameState.floatingTexts.length >= 64) {
+    gameState.floatingTexts.shift();
+  }
+  gameState.floatingTexts.push({
+    x: x + randRange(-14, 14),
+    y: y + randRange(-8, 8),
+    vy: -52,
+    text,
+    color,
+    scale,
+    alpha: 1,
+    life: 0.85,
+    maxLife: 0.85,
   });
 }
 
+function spawnSparks(x, y, countOrColor, colorOrCount, speedMin = 70, speedMax = 240, size = 2.5) {
+  // รองรับทั้งรูปแบบ (x, y, count, color, ...) และ (x, y, color, count, speedMax) จาก config.js
+  let count = countOrColor;
+  let color = colorOrCount;
+  if (typeof countOrColor === 'string') {
+    color = countOrColor;
+    count = Number.isFinite(colorOrCount) ? colorOrCount : 12;
+  }
+  for (let i = 0; i < count; i++) {
+    if (gameState.sparks.length >= 260) gameState.sparks.shift();
+    const a = Math.random() * Math.PI * 2;
+    const spd = randRange(speedMin, speedMax);
+    const life = randRange(0.22, 0.56);
+    gameState.sparks.push({
+      x,
+      y,
+      vx: Math.cos(a) * spd,
+      vy: Math.sin(a) * spd,
+      size: randRange(size * 0.7, size * 1.35),
+      color: color || '#fbbf24',
+      life,
+      maxLife: life,
+    });
+  }
+}
+
+function spawnShockwave(x, y, maxR, color = '#ff6a00', lineWidth = 4) {
+  if (gameState.shockwaves.length >= 40) gameState.shockwaves.shift();
+  gameState.shockwaves.push({
+    x,
+    y,
+    r: 14,
+    maxR,
+    color,
+    lineWidth,
+    life: 0.34,
+    maxLife: 0.34,
+  });
+}
+
+function spawnFloorDecal(x, y, r, kind = 'scorch', duration = 12) {
+  if (gameState.floorDecals.length >= 120) {
+    gameState.floorDecals.shift();
+  }
+  gameState.floorDecals.push({
+    x,
+    y,
+    r,
+    kind,
+    rot: Math.random() * Math.PI * 2,
+    life: duration,
+    maxLife: duration,
+  });
+}
+window.addFloorDecal = spawnFloorDecal;
+
+function spawnLightningArc(x1, y1, x2, y2, color = '#e879f9', width = 3) {
+  if (gameState.lightningArcs.length >= 48) gameState.lightningArcs.shift();
+  const segs = 6;
+  const pts = [{ x: x1, y: y1 }];
+  for (let i = 1; i < segs; i++) {
+    const t = i / segs;
+    pts.push({
+      x: x1 + (x2 - x1) * t + randRange(-24, 24),
+      y: y1 + (y2 - y1) * t + randRange(-24, 24),
+    });
+  }
+  pts.push({ x: x2, y: y2 });
+  gameState.lightningArcs.push({
+    pts,
+    color,
+    width,
+    life: 0.24,
+    maxLife: 0.24,
+  });
+}
+window.spawnLightningBranch = spawnLightningArc;
+
+function spawnSlashArc(x, y, radius, angle, halfArc, color, life = 0.2) {
+  gameState.slashes.push({
+    x,
+    y,
+    radius,
+    angle,
+    halfArc,
+    color,
+    life,
+    maxLife: life,
+  });
+}
+
+function spawnSlashCrescent(x, y, angle, halfArc, innerR, outerR, color, coreColor, life = 0.2) {
+  gameState.slashCrescents.push({
+    x,
+    y,
+    angle,
+    halfArc,
+    innerR,
+    outerR,
+    color,
+    coreColor,
+    life,
+    maxLife: life,
+  });
+}
+
+// -------------------------------------------------------------------------
+// 8C. PLAYER CREATION & WEAPON ASPECT SWITCHING (SOLAR / CRYO / VOLT)
+// -------------------------------------------------------------------------
 function createInitialPlayer() {
   const startX = ARENA_W * 0.5;
   const startY = ARENA_H * 0.5 + 150;
+  const scarf = [];
+  for (let i = 0; i < 6; i++) scarf.push({ x: startX, y: startY + i * 6 });
+
   return {
     x: startX,
     y: startY,
     vx: 0,
     vy: 0,
     r: 18,
-    aimAngle: -Math.PI * 0.5,
-    hp: 100,
-    maxHp: 100,
-    blessingHpBonus: 0,
-    moveSpeed: 320,
-    baseDamage: 28,
-    cleaveArcDeg: 122,
-    cleaveRange: 112,
-    vampiricHeal: 0,
-    chainNovaBolts: 0,
-    lanceBonusDmg: 0,
-    cdScale: 1.0,
-    scarf: Array.from({ length: 6 }, (_, idx) => ({
-      x: startX,
-      y: startY + idx * 7,
-    })),
+    hp: 150,
+    maxHp: 150,
+    blessingHpBonus: 50,
+    shield: 0,
+    baseDamage: 32,
+    moveSpeed: 268,
+    weaponAspect: 'solar', // 'solar' | 'cryo' | 'volt'
+    aimAngle: 0,
+    swordSwingOffset: 0,
+    swingDir: 1,
     comboStep: 0,
-    cleaveCd: 0,
-    lanceCd: 0,
-    lanceMaxCd: 2.5,
-    novaCd: 0,
-    novaMaxCd: 4.4,
-    cataclysmCd: 0,
-    cataclysmMaxCd: 11.0,
-    surgeGauge: 100,
-    surgeTimer: 0,
-    surgeDuration: 6.5,
+    comboResetTimer: 0,
+    attackCd: 0,
+    invulnTimer: 0,
+
+    // Dash
     dashCharges: 2,
     maxDashCharges: 2,
-    dashRechargeTimer: 0,
-    dashRechargeTime: 1.7,
+    dashRegenTimer: 0,
+    dashRegenDuration: 2.1,
     dashTimer: 0,
-    invulnTimer: 0,
-    afterimageTimer: 0,
-    swordSwingOffset: 0,
-    weaponAspect: 'solar',
-    skillPoints: 1,
-    shards: 15,
+    dashDirX: 1,
+    dashDirY: 0,
+
+    // Skills & Overdrive
+    surgeGauge: 0,
+    surgeTimer: 0,
+    surgeDuration: 7.5,
+    surgeCd: 0,
+    surgeMaxCd: 9.0,
+    lanceCd: 0,
+    lanceMaxCd: 3.3,
+    novaCd: 0,
+    novaMaxCd: 6.4,
+    cataclysmCd: 0,
+    cataclysmMaxCd: 13.0,
+
+    // Progression & Derived Stats
+    skillPoints: 0,
+    shards: 0,
     forgeLevel: 0,
-    equippedRelics: [],
-    inventoryRelics: [rollArpgRelic('rare')],
-    // Multi-Branch Blessing States
-    blessingRanks: {},
-    shield: 0,
-    maxShield: 0,
-    phantomWaveLevel: 0,
-    execBonus: 0,
+    dmgMult: 1,
+    critChance: 0.16,
     critBonus: 0,
-    reactionBonusMult: 1.0,
+    critMult: 1.75,
+    cooldownScale: 1,
+    cdScale: 1,
+    speedMult: 1,
+    lifeSteal: 0,
+    shardBonus: 0,
+    reactionMult: 1,
+    dashShield: 0,
     shiftBurstLevel: 0,
     shiftHealCd: 0,
-    dmgReduction: 0,
-    thornsLevel: 0,
-    phaseLightningLevel: 0,
-    overdriveDrainMult: 1.0,
-    cataclysmEchoLevel: 0,
-    magnetMult: 1.0,
-    extraSurgeMult: 1.0,
-    bonusShardDrop: 0,
+    equippedRelics: [],
+    inventoryRelics: [],
+    unlockedNodes: {},
+
+    // Visual, Buff & Terrain States
+    transformAnimTimer: 0,
+    transformAnimMax: 1.15,
+    shrineFuryTimer: 0,
+    voltHasteTimer: 0,
+    inIcePool: false,
+    lavaTick: 0,
+    springTick: 0,
+    scarf,
   };
 }
 
-function pushCombatLog(msg, tone = 'amber') {
-  gameState.combatLog.unshift({ msg, tone });
-  if (gameState.combatLog.length > 3) gameState.combatLog.length = 3;
-  const listEl = document.getElementById('combat-log-list');
-  if (!listEl) return;
-  listEl.innerHTML = gameState.combatLog
-    .map((item) => {
-      const colorClass =
-        item.tone === 'rose'
-          ? 'text-rose-300'
-          : item.tone === 'cyan'
-          ? 'text-cyan-300'
-          : 'text-amber-200/90';
-      return `<li class="${colorClass} truncate">&gt; ${item.msg}</li>`;
-    })
-    .join('');
-}
-
-function addFloatingText(x, y, text, color = '#ffb800', scale = 1) {
-  gameState.floatingTexts.push({
-    x,
-    y,
-    vy: -60,
-    text,
-    color,
-    scale,
-    alpha: 1,
-    life: 0.8,
-  });
-}
-
-function spawnSparks(x, y, color = '#ff6a00', count = 12, speed = 230) {
-  for (let i = 0; i < count; i++) {
-    const ang = Math.random() * Math.PI * 2;
-    const spd = (0.35 + Math.random() * 0.85) * speed;
-    gameState.sparks.push({
-      x,
-      y,
-      vx: Math.cos(ang) * spd,
-      vy: Math.sin(ang) * spd,
-      life: 0.26 + Math.random() * 0.24,
-      maxLife: 0.5,
-      size: 2 + Math.random() * 2.6,
-      color,
+function initAmbientEmbers() {
+  gameState.ambientEmbers.length = 0;
+  for (let i = 0; i < 85; i++) {
+    gameState.ambientEmbers.push({
+      x: randRange(90, ARENA_W - 90),
+      y: randRange(90, ARENA_H - 90),
+      phase: Math.random() * Math.PI * 2,
+      cyan: (gameState.biomeIndex % 4 === 2) ? i % 4 !== 0 : i % 3 === 0,
     });
   }
 }
 
-function triggerDirectionalShake(mag, dx = 0, dy = 0) {
-  const len = Math.hypot(dx, dy);
-  if (len > 0.001) {
-    gameState.shakeDirX = dx / len;
-    gameState.shakeDirY = dy / len;
-  } else {
-    const ang = Math.random() * Math.PI * 2;
-    gameState.shakeDirX = Math.cos(ang);
-    gameState.shakeDirY = Math.sin(ang);
-  }
-  gameState.shakeMag = Math.max(gameState.shakeMag, mag);
-}
-
-// -------------------------------------------------------------------------
-// 4. COLLISION HELPERS (ARENA BOUNDS + TUNNEL GATEWAY + PILLARS)
-// -------------------------------------------------------------------------
-function resolveWorldCollisions(entity) {
-  const margin = entity.r + 22;
-  if (entity.x < margin) entity.x = margin;
-  if (entity.x > ARENA_W - margin) entity.x = ARENA_W - margin;
-
-  const inTunnelX =
-    entity === gameState.player &&
-    gameState.portalOpen &&
-    Math.abs(entity.x - TUNNEL_GATE.x) < 95;
-  const topMargin = inTunnelX ? 6 : margin;
-  if (entity.y < topMargin) entity.y = topMargin;
-  if (entity.y > ARENA_H - margin) entity.y = ARENA_H - margin;
-
-  for (let i = 0; i < PILLARS.length; i++) {
-    const pil = PILLARS[i];
-    const dx = entity.x - pil.x;
-    const dy = entity.y - pil.y;
-    const dist = Math.hypot(dx, dy) || 0.001;
-    const minDist = entity.r + pil.r;
-    if (dist < minDist) {
-      const overlap = minDist - dist;
-      entity.x += (dx / dist) * overlap;
-      entity.y += (dy / dist) * overlap;
-    }
-  }
-}
-
-function lineHitsPillar(x1, y1, x2, y2) {
-  for (let i = 0; i < PILLARS.length; i++) {
-    const pil = PILLARS[i];
-    const vx = x2 - x1;
-    const vy = y2 - y1;
-    const lenSq = vx * vx + vy * vy || 1;
-    const t = Math.max(0, Math.min(1, ((pil.x - x1) * vx + (pil.y - y1) * vy) / lenSq));
-    const closestX = x1 + t * vx;
-    const closestY = y1 + t * vy;
-    if (Math.hypot(pil.x - closestX, pil.y - closestY) < pil.r + 6) {
-      return true;
-    }
-  }
-  return false;
-}
-
-// -------------------------------------------------------------------------
-// 5. PLAYER COMBAT SKILLS (CLEAVE, VOID LANCE, PULSE NOVA, SURGE, PHASE)
-// -------------------------------------------------------------------------
-function getAttackMultiplier() {
-  const surgeMult = gameState.player.surgeTimer > 0 ? 1.75 : 1.0;
-  const comboMult = 1 + Math.min(0.65, gameState.combo * 0.02);
-  return surgeMult * comboMult;
-}
-
-function performBladeCleave() {
+function switchWeaponAspect(aspectKey) {
   const p = gameState.player;
-  if (!p || gameState.phase !== 'playing' || p.cleaveCd > 0) return;
+  if (!p || gameState.phase !== 'playing') return;
+  if (!['solar', 'cryo', 'volt'].includes(aspectKey)) return;
+  if (p.weaponAspect === aspectKey) return;
 
-  const asp = WEAPON_ASPECTS[p.weaponAspect || 'solar'] || WEAPON_ASPECTS.solar;
-  const speedMult = p.surgeTimer > 0 ? 1.65 : 1.0;
-  const aspectSpeedBonus = asp.key === 'volt' ? 1.24 : asp.key === 'solar' ? 0.94 : 1.0;
-  const cdMult = getEffectiveCooldownScale();
-  p.cleaveCd = (0.27 / (speedMult * aspectSpeedBonus)) * cdMult;
-  p.comboStep = (p.comboStep + 1) % 3;
+  p.weaponAspect = aspectKey;
+  p.comboStep = 0;
+  p.transformAnimMax = aspectKey === 'volt' ? 1.45 : 1.15;
+  p.transformAnimTimer = p.transformAnimMax;
 
-  const dir = p.aimAngle;
-  const dxDir = Math.cos(dir);
-  const dyDir = Math.sin(dir);
-  const halfArc = (((p.cleaveArcDeg * asp.arcMult) * Math.PI) / 180) * 0.5;
-  const isFinisher = p.comboStep === 2;
-  const isCrit = isFinisher || Math.random() < getEffectiveCritChance();
-  const forgeMult = 1 + (p.forgeLevel || 0) * 0.12 + getEquippedRelicStat('dmg') / 100 + getConstellationRank('sol_1') * 0.18;
-  const dmg = Math.round(
-    p.baseDamage * asp.dmgMult * forgeMult * (isFinisher ? 1.48 : 1.0) * (isCrit ? 1.35 : 1.0) * getAttackMultiplier()
-  );
-
-  const slashColor = p.surgeTimer > 0 ? '#ffb800' : asp.color;
-  const cleaveR = p.cleaveRange * (asp.key === 'cryo' ? 1.25 : asp.key === 'volt' ? 0.96 : 1.06);
-  const atkEl = asp.key === 'solar' ? 'fire' : asp.key === 'cryo' ? 'ice' : 'volt';
-
-  gameState.slashes.push({
-    x: p.x,
-    y: p.y,
-    angle: dir,
-    halfArc,
-    radius: cleaveR,
-    swingSign: p.comboStep % 2 === 0 ? 1 : -1,
-    life: 0.21,
-    maxLife: 0.21,
-    color: slashColor,
-    aspect: asp.key,
-  });
-  gameState.slashCrescents.push({
-    x: p.x + dxDir * 14,
-    y: p.y + dyDir * 14,
-    angle: dir,
-    halfArc: halfArc * 0.92,
-    outerR: cleaveR * 1.06,
-    innerR: cleaveR * 0.56,
-    color: slashColor,
-    coreColor: p.surgeTimer > 0 ? '#fef08a' : asp.core,
-    life: 0.18,
-    maxLife: 0.18,
-  });
-  p.swordSwingOffset = (p.comboStep % 2 === 0 ? 1 : -1) * 1.15;
-
-  for (let r = 0; r < 9; r++) {
-    const frac = r / 8;
-    const a = dir - halfArc + frac * halfArc * 2;
-    const reach = cleaveR * 0.95;
-    gameState.bladeRibbons.push({
-      x: p.x + Math.cos(a) * reach,
-      y: p.y + Math.sin(a) * reach,
-      ix: p.x + Math.cos(a) * (p.r + 10),
-      iy: p.y + Math.sin(a) * (p.r + 10),
-      life: 0.21 - frac * 0.04,
-      maxLife: 0.21,
-      gold: p.surgeTimer > 0 || isFinisher,
-      color: slashColor,
-    });
+  // อัปเดตไฮไลต์ปุ่มสลับร่างบน HUD
+  const btnSolar = document.getElementById('aspect-btn-solar');
+  const btnCryo = document.getElementById('aspect-btn-cryo');
+  const btnVolt = document.getElementById('aspect-btn-volt');
+  if (btnSolar) {
+    btnSolar.className = 'pixel-btn px-2.5 py-1 font-bold cursor-pointer ' +
+      (aspectKey === 'solar' ? 'border-amber-300 text-amber-300' : 'text-slate-400');
+  }
+  if (btnCryo) {
+    btnCryo.className = 'pixel-btn px-2.5 py-1 font-bold cursor-pointer ' +
+      (aspectKey === 'cryo' ? 'border-cyan-300 text-cyan-200' : 'text-slate-400');
+  }
+  if (btnVolt) {
+    btnVolt.className = 'pixel-btn px-2.5 py-1 font-bold cursor-pointer ' +
+      (aspectKey === 'volt' ? 'border-purple-300 text-purple-200' : 'text-slate-400');
   }
 
-  if (asp.key === 'cryo') {
-    for (let s = -1; s <= 1; s++) {
-      const sa = dir + s * 0.18;
+  const col = aspectKey === 'solar' ? '#ff6a00' : aspectKey === 'cryo' ? '#22d3ee' : '#e879f9';
+  const elem = getActiveElementKey(aspectKey);
+  const shiftLvl = p.shiftBurstLevel || 0;
+  const dmg = Math.round((18 + shiftLvl * 16) * getPlayerDamageMult());
+
+  spawnFloorDecal(p.x, p.y, 82, `crack_${aspectKey}`, 14);
+  spawnShockwave(p.x, p.y, 150, col, 5.5);
+  spawnSparks(p.x, p.y, 30, col, 95, 310, 3.2);
+  addCameraShake(10, 0, 1);
+  playSfx('playTransform', aspectKey);
+
+  const foes = getAllActiveFoes();
+  if (aspectKey === 'cryo') {
+    for (let s = 0; s < 6; s++) {
+      const a = (s / 6) * Math.PI * 2;
       gameState.iceShards.push({
-        x: p.x + Math.cos(sa) * 32,
-        y: p.y + Math.sin(sa) * 32,
-        vx: Math.cos(sa) * 340,
-        vy: Math.sin(sa) * 340,
-        rot: sa,
-        size: 9,
-        life: 0.26,
-        maxLife: 0.26,
+        x: p.x,
+        y: p.y,
+        vx: Math.cos(a) * 360,
+        vy: Math.sin(a) * 360,
+        r: 8,
+        dmg: Math.round(dmg * 0.7),
+        life: 0.45,
+        maxLife: 0.45,
       });
     }
-  } else if (asp.key === 'volt') {
-    const tipX = p.x + dxDir * (cleaveR * 0.95);
-    const tipY = p.y + dyDir * (cleaveR * 0.95);
-    spawnLightningBranch(p.x + dxDir * 22, p.y + dyDir * 22, tipX, tipY, '#c084fc', 2.4);
-  }
-
-  if (isFinisher) {
-    addFloorDecal(p.x + dxDir * 45, p.y + dyDir * 45, 42, 'scorch');
-    gameState.chromaticTimer = 0.14;
-
-    // พร Phantom Echo: ฮิตที่ 3 ปล่อยคลื่นดาบทะลวงไปข้างหน้า
-    if ((p.phantomWaveLevel || 0) > 0) {
-      const waveCount = p.phantomWaveLevel;
-      for (let w = 0; w < waveCount; w++) {
-        const spread = (w - (waveCount - 1) * 0.5) * 0.18;
-        const wa = dir + spread;
-        gameState.playerBolts.push({
-          x: p.x + Math.cos(wa) * 28,
-          y: p.y + Math.sin(wa) * 28,
-          vx: Math.cos(wa) * 660,
-          vy: Math.sin(wa) * 660,
-          r: 14,
-          pierce: true,
-          hitIds: new Set(),
-          element: atkEl,
-          color: slashColor,
-          dmg: Math.round(dmg * 0.85),
-          life: 0.72,
-        });
-      }
-    }
-  }
-
-  p.x += dxDir * 11;
-  p.y += dyDir * 11;
-  resolveWorldCollisions(p);
-
-  let hitAny = false;
-  const targets = gameState.boss ? [...gameState.enemies, gameState.boss] : gameState.enemies;
-
-  for (let i = targets.length - 1; i >= 0; i--) {
-    const en = targets[i];
-    if (!en || en.hp <= 0) continue;
-    const dx = en.x - p.x;
-    const dy = en.y - p.y;
-    const dist = Math.hypot(dx, dy);
-    if (dist <= cleaveR + en.r) {
-      let diff = Math.atan2(dy, dx) - dir;
-      while (diff > Math.PI) diff -= Math.PI * 2;
-      while (diff < -Math.PI) diff += Math.PI * 2;
-
-      if (Math.abs(diff) <= halfArc + 0.25) {
-        hitAny = true;
-        if (hasConstellation('cry_1')) en.slowTimer = Math.max(en.slowTimer || 0, 2.4);
-        if (hasConstellation('sol_1')) en.burnTimer = Math.max(en.burnTimer || 0, 2.8);
-        if (asp.key === 'volt' || hasConstellation('vlt_3')) {
-          spawnLightningBranch(p.x, p.y, en.x, en.y, '#c084fc', 2.2);
-        }
-        damageEnemy(en, dmg, dxDir * 230, dyDir * 230, isCrit);
-        applyElementalAura(en, atkEl, dmg);
-        spawnSparks(en.x, en.y, p.surgeTimer > 0 ? '#ffb800' : asp.color, 10, 220);
-        if (p.vampiricHeal > 0) {
-          p.hp = Math.min(p.maxHp, p.hp + p.vampiricHeal);
-          addFloatingText(p.x, p.y - 36, `+${p.vampiricHeal} HP`, '#10b981', 0.9);
-        }
-      }
-    }
-  }
-
-  if (hitAny) {
-    gameState.hitstopTimer = isFinisher ? 0.045 : 0.022;
-    triggerDirectionalShake(isFinisher ? 7.5 : 3.8, dxDir, dyDir);
-    playCombatSfx('cleave', 0.9 + p.comboStep * 0.12);
-  } else {
-    playCombatSfx('cleave', 1.15);
-  }
-}
-
-function performVoidLance() {
-  const p = gameState.player;
-  if (!p || gameState.phase !== 'playing' || p.lanceCd > 0) return;
-
-  p.lanceCd = p.lanceMaxCd * getEffectiveCooldownScale();
-  p.invulnTimer = Math.max(p.invulnTimer, 0.34);
-  p.dashTimer = 0.19;
-
-  const dir = p.aimAngle;
-  const dxDir = Math.cos(dir);
-  const dyDir = Math.sin(dir);
-  const lanceSpeed = 940;
-  p.vx = dxDir * lanceSpeed;
-  p.vy = dyDir * lanceSpeed;
-
-  const cry2Mult = 1 + getConstellationRank('cry_2') * 0.25;
-  const dmg = Math.round((p.baseDamage * 1.95 + p.lanceBonusDmg) * 1.35 * cry2Mult * getAttackMultiplier());
-  const hitSet = new Set();
-
-  const aspLance = WEAPON_ASPECTS[p.weaponAspect || 'solar'] || WEAPON_ASPECTS.solar;
-  const lanceCol = aspLance.key === 'volt' ? '#c084fc' : aspLance.key === 'solar' ? '#ffb800' : '#22d3ee';
-  const lanceEl = aspLance.key === 'solar' ? 'fire' : aspLance.key === 'cryo' ? 'ice' : 'volt';
-  addFloorDecal(p.x + dxDir * 90, p.y + dyDir * 90, 44, aspLance.key === 'cryo' ? 'frost' : 'shock');
-  gameState.shockwaves.push({
-    x: p.x + dxDir * 48,
-    y: p.y + dyDir * 48,
-    r: 18,
-    maxR: 108,
-    life: 0.24,
-    maxLife: 0.24,
-    color: lanceCol,
-    lineWidth: 4.5,
-  });
-  if (aspLance.key === 'cryo' || hasConstellation('cry_2')) {
-    for (let ic = -2; ic <= 2; ic++) {
-      const ia = dir + ic * 0.14;
-      gameState.iceShards.push({
-        x: p.x + dxDir * 40,
-        y: p.y + dyDir * 40,
-        vx: Math.cos(ia) * 430,
-        vy: Math.sin(ia) * 430,
-        rot: ia,
-        size: 10,
-        life: 0.34,
-        maxLife: 0.34,
-      });
-    }
-  } else if (aspLance.key === 'volt') {
-    spawnLightningBranch(p.x, p.y, p.x + dxDir * 210, p.y + dyDir * 210, '#c084fc', 3.0);
-  }
-
-  const targets = gameState.boss ? [...gameState.enemies, gameState.boss] : gameState.enemies;
-  for (let i = targets.length - 1; i >= 0; i--) {
-    const en = targets[i];
-    if (!en || en.hp <= 0 || hitSet.has(en)) continue;
-    const segLen = 240;
-    const ex = en.x - p.x;
-    const ey = en.y - p.y;
-    const proj = Math.max(0, Math.min(segLen, ex * dxDir + ey * dyDir));
-    const cx = p.x + dxDir * proj;
-    const cy = p.y + dyDir * proj;
-    if (Math.hypot(en.x - cx, en.y - cy) <= en.r + 36) {
-      hitSet.add(en);
-      damageEnemy(en, dmg, dxDir * 350, dyDir * 350, true);
-      applyElementalAura(en, lanceEl, dmg);
-      spawnSparks(en.x, en.y, '#22d3ee', 12, 260);
-    }
-  }
-
-  // พร Void Piercer: ระเบิดดาเมจ AoE ปลายทาง
-  if (p.lanceBonusDmg > 0) {
-    const endX = p.x + dxDir * 170;
-    const endY = p.y + dyDir * 170;
-    gameState.shockwaves.push({
-      x: endX,
-      y: endY,
-      r: 10,
-      maxR: 125,
-      life: 0.26,
-      maxLife: 0.26,
-      color: '#a855f7',
-      lineWidth: 3.5,
-    });
-    const blastTargets = gameState.boss ? [...gameState.enemies, gameState.boss] : gameState.enemies;
-    for (let k = blastTargets.length - 1; k >= 0; k--) {
-      const foe = blastTargets[k];
-      if (foe && foe.hp > 0 && Math.hypot(foe.x - endX, foe.y - endY) <= 125 + foe.r) {
-        damageEnemy(foe, Math.round(dmg * 0.65), 0, 0, true);
-      }
-    }
-  }
-
-  gameState.astralRings.push({
-    x: p.x + dxDir * 64,
-    y: p.y + dyDir * 64,
-    r: 72,
-    rot: dir,
-    spokes: 6,
-    color: lanceCol,
-    life: 0.28,
-    maxLife: 0.28,
-  });
-  gameState.hitstopTimer = 0.038;
-  gameState.chromaticTimer = 0.16;
-  triggerDirectionalShake(7.0, dxDir, dyDir);
-  playCombatSfx('lance', 1.0);
-}
-
-function spawnLightningBranch(x1, y1, x2, y2, color = '#22d3ee', width = 2.6) {
-  const segments = 7;
-  const pts = [{ x: x1, y: y1 }];
-  const dx = x2 - x1;
-  const dy = y2 - y1;
-  const len = Math.hypot(dx, dy) || 1;
-  const nx = -dy / len;
-  const ny = dx / len;
-  for (let s = 1; s < segments; s++) {
-    const t = s / segments;
-    const jitter = (Math.random() - 0.5) * 34;
-    pts.push({
-      x: x1 + dx * t + nx * jitter,
-      y: y1 + dy * t + ny * jitter,
-    });
-  }
-  pts.push({ x: x2, y: y2 });
-  gameState.lightningArcs.push({
-    pts,
-    life: 0.22,
-    maxLife: 0.22,
-    color,
-    width,
-  });
-}
-
-function performPulseNova() {
-  const p = gameState.player;
-  if (!p || gameState.phase !== 'playing' || p.novaCd > 0) return;
-
-  p.novaCd = p.novaMaxCd * getEffectiveCooldownScale();
-  const radius = p.chainNovaBolts > 0 ? 280 : 215;
-  const dmg = Math.round(p.baseDamage * 1.6 * 1.3 * getAttackMultiplier());
-
-  addFloorDecal(p.x, p.y, radius * 0.48, 'frost');
-  gameState.shockwaves.push({
-    x: p.x,
-    y: p.y,
-    r: 20,
-    maxR: radius,
-    life: 0.35,
-    maxLife: 0.35,
-    color: '#22d3ee',
-    lineWidth: 5,
-  });
-
-  const shardTotal = 16 + (hasConstellation('cry_3') ? 6 : 0);
-  for (let s = 0; s < shardTotal; s++) {
-    const ang = (s / shardTotal) * Math.PI * 2 + Math.random() * 0.2;
-    const spd = 210 + Math.random() * 190;
-    gameState.iceShards.push({
-      x: p.x + Math.cos(ang) * 20,
-      y: p.y + Math.sin(ang) * 20,
-      vx: Math.cos(ang) * spd,
-      vy: Math.sin(ang) * spd,
-      rot: ang,
-      size: 8 + Math.random() * 7,
-      life: 0.36 + Math.random() * 0.14,
-      maxLife: 0.5,
-    });
-  }
-
-  const targets = gameState.boss ? [...gameState.enemies, gameState.boss] : gameState.enemies;
-  let prevChainX = p.x;
-  let prevChainY = p.y;
-  let chainedCount = 0;
-
-  for (let i = targets.length - 1; i >= 0; i--) {
-    const en = targets[i];
-    if (!en || en.hp <= 0) continue;
-    const dx = en.x - p.x;
-    const dy = en.y - p.y;
-    const dist = Math.hypot(dx, dy) || 1;
-    if (dist <= radius + en.r) {
-      en.slowTimer = Math.max(en.slowTimer || 0, 2.6);
-      damageEnemy(en, dmg, (dx / dist) * 380, (dy / dist) * 380, true);
-      applyElementalAura(en, 'ice', dmg);
-      spawnSparks(en.x, en.y, '#22d3ee', 10, 220);
-
-      if (chainedCount < 5) {
-        spawnLightningBranch(prevChainX, prevChainY, en.x, en.y, '#38bdf8', 2.8);
-        spawnLightningBranch(
-          en.x,
-          en.y,
-          en.x + (Math.random() - 0.5) * 70,
-          en.y + (Math.random() - 0.5) * 70,
-          '#bae6fd',
-          1.4
-        );
-        prevChainX = en.x;
-        prevChainY = en.y;
-        chainedCount++;
-      }
-    }
-  }
-
-  if (p.chainNovaBolts > 0) {
-    for (let b = 0; b < p.chainNovaBolts; b++) {
-      const ang = (b / p.chainNovaBolts) * Math.PI * 2 + p.aimAngle;
-      gameState.playerBolts.push({
-        x: p.x + Math.cos(ang) * 24,
-        y: p.y + Math.sin(ang) * 24,
-        vx: Math.cos(ang) * 570,
-        vy: Math.sin(ang) * 570,
-        r: 7,
-        element: 'fire',
-        color: '#ffb800',
-        dmg: Math.round(p.baseDamage * 0.95 * getAttackMultiplier()),
-        life: 0.9,
-      });
-    }
-  }
-
-  gameState.astralRings.push({
-    x: p.x,
-    y: p.y,
-    r: radius * 0.88,
-    rot: p.aimAngle,
-    spokes: 12,
-    color: '#22d3ee',
-    life: 0.42,
-    maxLife: 0.42,
-  });
-  gameState.vortexCores.push({
-    x: p.x,
-    y: p.y,
-    maxR: radius * 0.65,
-    color: '#38bdf8',
-    life: 0.36,
-    maxLife: 0.36,
-  });
-  gameState.hitstopTimer = 0.035;
-  gameState.chromaticTimer = 0.16;
-  triggerDirectionalShake(9.0);
-  playCombatSfx('ice_burst', 1.0);
-}
-
-function performSolarCataclysm() {
-  const p = gameState.player;
-  if (!p || gameState.phase !== 'playing' || p.cataclysmCd > 0) return;
-
-  p.cataclysmCd = p.cataclysmMaxCd * getEffectiveCooldownScale();
-  p.invulnTimer = Math.max(p.invulnTimer, 0.65);
-
-  const radius = 340;
-  const dmg = Math.round(p.baseDamage * 3.1 * getAttackMultiplier());
-
-  addFloorDecal(p.x, p.y, 135, 'scorch');
-  gameState.shockwaves.push({
-    x: p.x,
-    y: p.y,
-    r: 24,
-    maxR: radius,
-    life: 0.48,
-    maxLife: 0.48,
-    color: '#ffb800',
-    lineWidth: 7,
-  });
-  gameState.shockwaves.push({
-    x: p.x,
-    y: p.y,
-    r: 12,
-    maxR: radius * 0.72,
-    life: 0.36,
-    maxLife: 0.36,
-    color: '#ff6a00',
-    lineWidth: 4,
-  });
-
-  for (let ray = 0; ray < 8; ray++) {
-    const ang = (ray / 8) * Math.PI * 2 + p.aimAngle;
-    const tx = p.x + Math.cos(ang) * (radius * 0.85);
-    const ty = p.y + Math.sin(ang) * (radius * 0.85);
-    spawnLightningBranch(p.x, p.y, tx, ty, '#ffb800', 3.0);
-    spawnSparks(tx, ty, '#ff6a00', 8, 220);
-  }
-
-  const targets = gameState.boss ? [...gameState.enemies, gameState.boss] : gameState.enemies;
-  for (let i = targets.length - 1; i >= 0; i--) {
-    const en = targets[i];
-    if (!en || en.hp <= 0) continue;
-    const dx = en.x - p.x;
-    const dy = en.y - p.y;
-    const dist = Math.hypot(dx, dy) || 1;
-    if (dist <= radius + en.r) {
-      damageEnemy(en, dmg, (dx / dist) * 460, (dy / dist) * 460, true);
-      applyElementalAura(en, 'fire', dmg);
-      spawnSparks(en.x, en.y, '#ffb800', 14, 280);
-    }
-  }
-
-  // พร Cataclysm Echo: ยิงลูกไฟสุริยันกระจายซ้ำ
-  if ((p.cataclysmEchoLevel || 0) > 0) {
-    const boltCount = 6 * p.cataclysmEchoLevel;
-    for (let b = 0; b < boltCount; b++) {
-      const ang = (b / boltCount) * Math.PI * 2 + p.aimAngle;
-      gameState.playerBolts.push({
-        x: p.x + Math.cos(ang) * 28,
-        y: p.y + Math.sin(ang) * 28,
-        vx: Math.cos(ang) * 580,
-        vy: Math.sin(ang) * 580,
-        r: 9,
-        element: 'fire',
-        color: '#ff6a00',
-        dmg: Math.round(p.baseDamage * 1.35 * getAttackMultiplier()),
-        life: 0.95,
-      });
-    }
-  }
-
-  gameState.astralRings.push({
-    x: p.x,
-    y: p.y,
-    r: radius * 0.92,
-    rot: p.aimAngle,
-    spokes: 16,
-    color: '#ffb800',
-    life: 0.56,
-    maxLife: 0.56,
-  });
-  gameState.astralRings.push({
-    x: p.x,
-    y: p.y,
-    r: radius * 0.56,
-    rot: -p.aimAngle,
-    spokes: 8,
-    color: '#ff6a00',
-    life: 0.48,
-    maxLife: 0.48,
-  });
-  gameState.vortexCores.push({
-    x: p.x,
-    y: p.y,
-    maxR: radius * 0.78,
-    color: '#ffb800',
-    life: 0.48,
-    maxLife: 0.48,
-  });
-  gameState.hitstopTimer = 0.055;
-  gameState.chromaticTimer = 0.28;
-  triggerDirectionalShake(13.5);
-  addFloatingText(p.x, p.y - 38, 'SOLAR CATACLYSM!', '#ffb800', 1.35);
-  playCombatSfx('volt_shock', 1.0);
-}
-
-function performBloodGoldSurge() {
-  const p = gameState.player;
-  if (!p || gameState.phase !== 'playing' || p.surgeTimer > 0 || (p.surgeCd || 0) > 0 || p.surgeGauge < 100) return;
-
-  const minFloorHp = Math.max(1, Math.ceil(p.maxHp * 0.1));
-  if (p.hp <= minFloorHp + 4) {
-    addFloatingText(p.x, p.y - 30, 'HP TOO LOW (MIN 10%)', '#fb7185', 1.0);
-    playCombatSfx('hurt', 0.8);
-    return;
-  }
-
-  p.surgeGauge = 0;
-  p.surgeTimer = p.surgeDuration;
-  p.surgeMaxCd = 9.0;
-  p.surgeCd = 0;
-  p.invulnTimer = Math.max(p.invulnTimer, 0.35);
-
-  const sacrificeCost = Math.min(Math.round(14 * (p.overdriveDrainMult || 1.0)), Math.max(0, p.hp - minFloorHp));
-  p.hp = Math.max(minFloorHp, p.hp - sacrificeCost);
-
-  addFloorDecal(p.x, p.y, 75, 'scorch');
-  gameState.overdriveSigils.push({
-    x: p.x,
-    y: p.y,
-    r: 92,
-    rot: 0,
-    life: p.surgeDuration,
-    maxLife: p.surgeDuration,
-    color: '#ffb800',
-  });
-  gameState.shockwaves.push({
-    x: p.x,
-    y: p.y,
-    r: 16,
-    maxR: 195,
-    life: 0.34,
-    maxLife: 0.34,
-    color: '#ffb800',
-    lineWidth: 4.5,
-  });
-  spawnSparks(p.x, p.y, '#ffb800', 24, 290);
-  addFloatingText(p.x, p.y - 30, 'BLOOD OVERDRIVE!', '#ffb800', 1.25);
-  playCombatSfx('overdrive_roar', 1.0);
-}
-
-function performDodgeRoll() {
-  const p = gameState.player;
-  if (!p || gameState.phase !== 'playing' || p.dashCharges <= 0 || p.dashTimer > 0) return;
-
-  p.dashCharges--;
-  p.dashTimer = 0.17;
-  p.invulnTimer = Math.max(p.invulnTimer, 0.32);
-  p.phasePayoffArmed = true;
-
-  let mx = 0;
-  let my = 0;
-  if (gameState.keys.has('KeyW') || gameState.keys.has('ArrowUp')) my -= 1;
-  if (gameState.keys.has('KeyS') || gameState.keys.has('ArrowDown')) my += 1;
-  if (gameState.keys.has('KeyA') || gameState.keys.has('ArrowLeft')) mx -= 1;
-  if (gameState.keys.has('KeyD') || gameState.keys.has('ArrowRight')) mx += 1;
-
-  let rollAngle = p.aimAngle;
-  if (mx !== 0 || my !== 0) {
-    const isoMx = mx + my;
-    const isoMy = my - mx;
-    rollAngle = Math.atan2(isoMy, isoMx);
-  }
-  const rollSpeed = 780;
-  p.vx = Math.cos(rollAngle) * rollSpeed;
-  p.vy = Math.sin(rollAngle) * rollSpeed;
-
-  gameState.shockwaves.push({
-    x: p.x,
-    y: p.y,
-    r: 10,
-    maxR: 68,
-    life: 0.18,
-    maxLife: 0.18,
-    color: '#22d3ee',
-    lineWidth: 2.5,
-  });
-  addFloatingText(p.x, p.y - 24, 'PHASE', '#22d3ee', 0.9);
-  playCombatSfx('dodge', 1.0);
-
-  // พร Volt Step: พริบตาฟาดสายฟ้าใส่ศัตรูใกล้เคียง
-  if ((p.phaseLightningLevel || 0) > 0) {
-    const voltDmg = Math.round(p.baseDamage * (0.9 + p.phaseLightningLevel * 0.35) * getAttackMultiplier());
-    const maxHits = 2 + p.phaseLightningLevel;
-    const allFoes = gameState.boss && gameState.boss.hp > 0 ? [...gameState.enemies, gameState.boss] : gameState.enemies;
+  } else if (aspectKey === 'volt') {
+    p.voltHasteTimer = 1.6;
     let struck = 0;
-    for (let i = allFoes.length - 1; i >= 0 && struck < maxHits; i--) {
-      const foe = allFoes[i];
-      if (foe && foe.hp > 0 && Math.hypot(foe.x - p.x, foe.y - p.y) <= 220 + foe.r) {
-        spawnLightningBranch(p.x, p.y, foe.x, foe.y, '#c084fc', 2.8);
-        damageEnemy(foe, voltDmg, 0, 0, true);
-        applyElementalAura(foe, 'volt', voltDmg);
+    for (let i = 0; i < foes.length && struck < 3; i++) {
+      const en = foes[i];
+      if (en.hp > 0 && Math.hypot(en.x - p.x, en.y - p.y) < 230) {
+        spawnLightningArc(p.x, p.y - 120, en.x, en.y, '#e879f9', 3.5);
+        damageEnemy(en, dmg, 'volt', false, 0, 0);
         struck++;
       }
     }
   }
+
+  for (let i = 0; i < foes.length; i++) {
+    const en = foes[i];
+    if (en.hp <= 0) continue;
+    const d = Math.hypot(en.x - p.x, en.y - p.y);
+    if (d < 155) {
+      const a = Math.atan2(en.y - p.y, en.x - p.x);
+      damageEnemy(en, dmg, elem, false, Math.cos(a) * 210, Math.sin(a) * 210);
+    }
+  }
+
+  if (shiftLvl > 0 && (p.shiftHealCd || 0) <= 0) {
+    const healAmt = 6 * shiftLvl;
+    p.hp = Math.min(p.maxHp, p.hp + healAmt);
+    p.shiftHealCd = 3.0;
+    spawnFloatingText(p.x, p.y - 54, `+${healAmt} HP`, '#38bdf8', 1.0);
+  }
+
+  const label = aspectKey === 'solar' ? 'SOLAR CLEAVE' : aspectKey === 'cryo' ? 'CRYO LANCE' : 'VOLT REAPER';
+  spawnFloatingText(p.x, p.y - 38, label, col, 1.18);
+}
+window.switchWeaponAspect = switchWeaponAspect;
+window.selectWeaponAspect = switchWeaponAspect;
+window.setWeaponAspect = switchWeaponAspect;
+
+// -------------------------------------------------------------------------
+// 8D. ELEMENTAL REACTIONS & DAMAGE PIPELINE
+// -------------------------------------------------------------------------
+function getActiveElementKey(aspKey) {
+  if (aspKey === 'cryo') return 'ice';
+  if (aspKey === 'volt') return 'volt';
+  return 'fire';
 }
 
-function triggerPhasePayoff(p, hitX, hitY) {
-  if (!p || !p.phasePayoffArmed) return;
-  p.phasePayoffArmed = false;
+function triggerElementalReaction(target, incomingEl, baseDmg) {
+  const p = gameState.player;
+  const rMult = p ? (p.reactionMult || 1) : 1;
 
-  p.lanceCd = Math.max(0, (p.lanceCd || 0) - 0.85);
-  p.novaCd = Math.max(0, (p.novaCd || 0) - 1.15);
-  if (p.surgeTimer <= 0 && (p.surgeCd || 0) <= 0) {
-    p.surgeGauge = Math.min(100, (p.surgeGauge || 0) + 16);
+  const hasFire = (target.burnTimer || 0) > 0 || target.element === 'fire';
+  const hasIce = (target.slowTimer || 0) > 0 || target.element === 'ice';
+  const hasVolt = (target.shockTimer || 0) > 0 || target.element === 'volt';
+
+  // 1. MELT (Fire + Ice)
+  if ((incomingEl === 'fire' && hasIce) || (incomingEl === 'ice' && hasFire)) {
+    target.burnTimer = 0;
+    target.slowTimer = 0;
+    gameState.reactionsTriggered++;
+    const bonus = Math.round((baseDmg * 0.9 + 26) * rMult);
+    spawnShockwave(target.x, target.y, 120, '#fbbf24', 5.5);
+    spawnSparks(target.x, target.y, 20, '#67e8f9', 100, 270, 3);
+    spawnSparks(target.x, target.y, 14, '#ff6a00', 80, 220, 2.8);
+    spawnFloatingText(target.x, target.y - 28, `MELT! +${bonus}`, '#fde047', 1.32);
+    addCameraShake(8.5, 0, 1);
+    playSfx('playReaction', 'melt');
+    return bonus;
   }
 
-  gameState.shockwaves.push({
-    x: p.x,
-    y: p.y,
-    r: 14,
-    maxR: 132,
-    life: 0.25,
-    maxLife: 0.25,
-    color: '#34d399',
-    lineWidth: 3.5,
-  });
-  spawnSparks(p.x, p.y, '#34d399', 14, 240);
-  if (typeof hitX === 'number' && typeof hitY === 'number') {
-    spawnLightningBranch(p.x, p.y, hitX, hitY, '#34d399', 2.2);
+  // 2. OVERLOAD (Fire + Volt)
+  if ((incomingEl === 'fire' && hasVolt) || (incomingEl === 'volt' && hasFire)) {
+    target.burnTimer = 0;
+    target.shockTimer = 0;
+    gameState.reactionsTriggered++;
+    const aoeDmg = Math.round((baseDmg * 0.76 + 30) * rMult);
+    spawnShockwave(target.x, target.y, 175, '#ff2a5f', 6.5);
+    spawnFloorDecal(target.x, target.y, 62, 'scorch', 10);
+    spawnSparks(target.x, target.y, 28, '#e879f9', 120, 340, 3.2);
+    spawnFloatingText(target.x, target.y - 28, `OVERLOAD! ${aoeDmg}`, '#fb7185', 1.36);
+    addCameraShake(11.5, 1, 0);
+    playSfx('playReaction', 'overload');
+
+    if (target.chargeTimer > 0) {
+      target.chargeTimer = 0;
+      target.stunTimer = Math.max(target.stunTimer || 0, 0.9);
+    }
+
+    const foes = getAllActiveFoes();
+    for (let i = 0; i < foes.length; i++) {
+      const other = foes[i];
+      if (other === target || other.hp <= 0) continue;
+      const d = Math.hypot(other.x - target.x, other.y - target.y);
+      if (d <= 175) {
+        const ang = Math.atan2(other.y - target.y, other.x - target.x);
+        other.hp -= aoeDmg;
+        other.hitFlash = 0.14;
+        other.vx += Math.cos(ang) * 280;
+        other.vy += Math.sin(ang) * 280;
+        if (other.hp <= 0) handleEnemyDeath(other, other === gameState.boss);
+      }
+    }
+    return aoeDmg;
   }
-  addFloatingText(p.x, p.y - 36, 'EVADE PAYOFF! -CD', '#34d399', 1.15);
-  pushCombatLog(
-    currentLang === 'th'
-      ? 'หลบเฉียดสำเร็จ! ลดคูลดาวน์สกิล & เติม Overdrive +16%'
-      : 'EVADE PAYOFF! Skill CDs reduced & +16% Overdrive',
-    'cyan'
-  );
-  playCombatSfx('pickup', 1.28);
+
+  // 3. SUPERCONDUCT (Ice + Volt)
+  if ((incomingEl === 'ice' && hasVolt) || (incomingEl === 'volt' && hasIce)) {
+    target.slowTimer = 0;
+    target.shockTimer = 0;
+    target.vulnTimer = 6.5;
+    gameState.reactionsTriggered++;
+    const chainDmg = Math.round((baseDmg * 0.62 + 22) * rMult);
+    spawnShockwave(target.x, target.y, 155, '#38bdf8', 5);
+    spawnFloatingText(target.x, target.y - 28, `SUPERCONDUCT!`, '#67e8f9', 1.28);
+    addCameraShake(7.5, 0, -1);
+    playSfx('playReaction', 'superconduct');
+
+    let jumped = 0;
+    const foes = getAllActiveFoes();
+    for (let i = 0; i < foes.length && jumped < 4; i++) {
+      const other = foes[i];
+      if (other === target || other.hp <= 0) continue;
+      if (Math.hypot(other.x - target.x, other.y - target.y) <= 250) {
+        other.hp -= chainDmg;
+        other.vulnTimer = 5.5;
+        other.hitFlash = 0.12;
+        spawnLightningArc(target.x, target.y, other.x, other.y, '#67e8f9', 3.4);
+        if (other.hp <= 0) handleEnemyDeath(other, other === gameState.boss);
+        jumped++;
+      }
+    }
+    return chainDmg;
+  }
+
+  if (incomingEl === 'fire') target.burnTimer = Math.max(target.burnTimer || 0, 4.2);
+  if (incomingEl === 'ice') target.slowTimer = Math.max(target.slowTimer || 0, 4.4);
+  if (incomingEl === 'volt') target.shockTimer = Math.max(target.shockTimer || 0, 4.2);
+  return 0;
+}
+window.applyElementalAura = triggerElementalReaction;
+
+function damageEnemy(en, rawDmg, elem = 'fire', forceCrit = false, knockX = 0, knockY = 0) {
+  if (!en || en.hp <= 0) return;
+  const p = gameState.player;
+  const isBoss = en === gameState.boss;
+
+  const critRate = typeof getEffectiveCritChance === 'function'
+    ? Math.max(p ? p.critChance : 0.16, getEffectiveCritChance())
+    : (p ? p.critChance : 0.16);
+  const isCrit = forceCrit || (p && Math.random() < critRate);
+  let dmg = rawDmg * (isCrit ? (p ? p.critMult : 1.75) : 1);
+  if ((en.vulnTimer || 0) > 0) dmg *= 1.35;
+  if ((en.stunTimer || 0) > 0) dmg *= 1.2;
+
+  if (en.element && en.element !== 'normal') {
+    if (en.element === elem) dmg *= 0.85;
+    else dmg *= 1.14;
+  }
+
+  dmg = Math.max(1, Math.round(dmg));
+  const reactBonus = triggerElementalReaction(en, elem, dmg);
+  const totalDmg = dmg + reactBonus;
+
+  en.hp -= totalDmg;
+  en.hitFlash = 0.12;
+  en.squash = 0.72;
+
+  const kbScale = isBoss ? 0.14 : en.type === 'juggernaut' ? 0.32 : 1;
+  en.vx = (en.vx || 0) + knockX * kbScale;
+  en.vy = (en.vy || 0) + knockY * kbScale;
+
+  const col = isCrit ? '#fef08a' : elem === 'ice' ? '#67e8f9' : elem === 'volt' ? '#f0abfc' : '#fb923c';
+  spawnFloatingText(en.x, en.y - 10, isCrit ? `${dmg}!` : `${dmg}`, col, isCrit ? 1.25 : 0.95);
+  spawnSparks(en.x, en.y, isCrit ? 12 : 6, col, 60, 215, isCrit ? 3.1 : 2.2);
+
+  if (p) {
+    if (p.surgeTimer <= 0 && (p.surgeCd || 0) <= 0) {
+      const conduitMult = typeof getConstellationRank === 'function' ? 1 + getConstellationRank('vlt_2') * 0.18 : 1;
+      p.surgeGauge = Math.min(100, p.surgeGauge + (isCrit ? 4.8 : 2.6) * conduitMult);
+    }
+    if ((p.lifeSteal || 0) > 0) {
+      p.hp = Math.min(p.maxHp, p.hp + totalDmg * p.lifeSteal);
+    }
+  }
+
+  gameState.combo++;
+  if (gameState.combo > gameState.maxCombo) gameState.maxCombo = gameState.combo;
+  gameState.comboTimer = 3.4;
+
+  if (isCrit) {
+    triggerHitstop(0.032);
+    addCameraShake(5.5, knockX, knockY);
+  }
+  playSfx('playHit', isCrit);
+
+  if (isBoss && en.phase === 1 && en.hp > 0 && en.hp <= en.maxHp * 0.5) {
+    en.phase = 2;
+    en.speed *= 1.24;
+    en.telegraph = null;
+    spawnShockwave(en.x, en.y, 310, '#ff2a5f', 7.5);
+    spawnFloatingText(en.x, en.y - 44, 'PHASE 2: ENRAGE!', '#ff2a5f', 1.48);
+    addCameraShake(16, 0, 1);
+    gameState.chromaticTimer = 0.36;
+    playSfx('setMusicIntensity', 'boss_enrage');
+    pushCombatLog(`${en.name} entered ENRAGE Phase!`, '#ff2a5f');
+  }
+
+  if (en.hp <= 0) {
+    handleEnemyDeath(en, isBoss);
+  }
+}
+
+function handleEnemyDeath(en, isBoss) {
+  if (en.isDummy) {
+    en.hp = en.maxHp;
+    return;
+  }
+  if (en._deadHandled) return;
+  en._deadHandled = true;
+
+  gameState.kills++;
+  const basePts = isBoss ? 1250 : en.type === 'juggernaut' ? 240 : en.type === 'stalker' ? 160 : 110;
+  gameState.score += Math.round(basePts * (1 + Math.min(4, gameState.combo * 0.06)));
+
+  const p = gameState.player;
+  if (p) {
+    const leechOnKill = typeof getEquippedRelicStat === 'function' ? getEquippedRelicStat('leech') : 0;
+    if (leechOnKill > 0) p.hp = Math.min(p.maxHp, p.hp + leechOnKill);
+  }
+
+  gameState.dissolvingCorpses.push({ x: en.x, y: en.y, life: 0.55, maxLife: 0.55 });
+  spawnSparks(en.x, en.y, isBoss ? 52 : 16, isBoss ? '#ff2a5f' : '#ff6a00', 80, isBoss ? 370 : 240, isBoss ? 4.2 : 2.8);
+
+  if (isBoss) {
+    gameState.bossesDefeated++;
+    spawnShockwave(en.x, en.y, 340, '#fbbf24', 8.5);
+    addCameraShake(20, 0, 1);
+    triggerHitstop(0.09);
+    gameState.chromaticTimer = 0.4;
+    for (let i = 0; i < 6; i++) {
+      gameState.loots.push({
+        x: en.x + randRange(-60, 60),
+        y: en.y + randRange(-50, 50),
+        kind: i < 2 ? 'heal' : i < 4 ? 'surge' : 'shard',
+        life: 26,
+      });
+    }
+    if (p && typeof rollArpgRelic === 'function') {
+      p.inventoryRelics = p.inventoryRelics || [];
+      const dropRel = rollArpgRelic();
+      p.inventoryRelics.push(dropRel);
+      pushCombatLog(`BOSS DROPPED RELIC: ${dropRel.name}!`, '#fbbf24');
+    }
+    pushCombatLog(`DEFEATED ${en.name}!`, '#fbbf24');
+    gameState.boss = null;
+    playSfx('setMusicIntensity', 'boss_victory');
+  } else {
+    const roll = Math.random();
+    if (roll < 0.14) {
+      gameState.loots.push({ x: en.x, y: en.y, kind: 'heal', life: 18 });
+    } else if (roll < 0.28) {
+      gameState.loots.push({ x: en.x, y: en.y, kind: 'surge', life: 18 });
+    } else if (roll < 0.44) {
+      gameState.loots.push({ x: en.x, y: en.y, kind: 'shard', life: 18 });
+    }
+  }
+}
+
+function damagePlayer(rawDmg, srcX, srcY) {
+  const p = gameState.player;
+  if (!p || p.invulnTimer > 0 || p.dashTimer > 0 || gameState.phase !== 'playing') return;
+
+  let dmg = Math.max(1, Math.round(rawDmg));
+  if ((p.shield || 0) > 0) {
+    const absorbed = Math.min(p.shield, dmg);
+    p.shield -= absorbed;
+    dmg -= absorbed;
+  }
+
+  if (dmg > 0) {
+    p.hp = Math.max(0, p.hp - dmg);
+    spawnFloatingText(p.x, p.y - 24, `-${dmg}`, '#ff2a5f', 1.15);
+  } else {
+    spawnFloatingText(p.x, p.y - 24, 'BLOCKED', '#38bdf8', 1.0);
+  }
+
+  p.invulnTimer = 0.62;
+  const ang = Math.atan2(p.y - srcY, p.x - srcX);
+  p.vx += Math.cos(ang) * 230;
+  p.vy += Math.sin(ang) * 230;
+
+  addCameraShake(11, Math.cos(ang), Math.sin(ang));
+  gameState.chromaticTimer = 0.25;
+  spawnSparks(p.x, p.y, 14, '#ff2a5f', 90, 240, 3);
+  playSfx('playPlayerHurt');
+
+  if (p.hp <= 0) {
+    gameState.phase = 'gameover';
+    gameState.mouseDown = false;
+    if (gameState.keys && typeof gameState.keys.clear === 'function') gameState.keys.clear();
+    syncSaveAndGameOverStats(gameState.wave, gameState.score, gameState.kills);
+  }
 }
 
 // -------------------------------------------------------------------------
-// 6. ELEMENTAL ENEMIES, REBALANCED REACTIONS, RANDOMIZED BOSSES & TUNNEL
+// 8E. PLAYER 3-HIT WEAPON COMBOS & ASPECT-SPECIFIC SKILLS
 // -------------------------------------------------------------------------
-function spawnEnemyOfType(spec) {
-  const type = typeof spec === 'string' ? spec : spec.type;
-  const elementKey = typeof spec === 'object' && spec.element ? spec.element : 'normal';
-  const el = MONSTER_ELEMENTS[elementKey] || MONSTER_ELEMENTS.normal;
+function performPrimaryAttack() {
+  const p = gameState.player;
+  if (!p || p.attackCd > 0 || gameState.phase !== 'playing') return;
 
-  const edge = Math.floor(Math.random() * 4);
-  let x = ARENA_W * 0.5;
-  let y = ARENA_H * 0.5;
-  if (edge === 0) { x = 80 + Math.random() * (ARENA_W - 160); y = 85; }
-  else if (edge === 1) { x = ARENA_W - 70; y = 80 + Math.random() * (ARENA_H - 160); }
-  else if (edge === 2) { x = 80 + Math.random() * (ARENA_W - 160); y = ARENA_H - 70; }
-  else { x = 70; y = 80 + Math.random() * (ARENA_H - 160); }
+  const aspKey = p.weaponAspect || 'solar';
+  const elem = getActiveElementKey(aspKey);
+  const mult = getPlayerDamageMult();
 
-  const waveScale = 1 + (gameState.wave - 1) * 0.18;
-  const baseCfg = {
-    juggernaut: { r: 25, hp: 135, speed: 118, dmg: 20, fireCd: 99, label: 'Juggernaut' },
-    weaver:     { r: 18, hp: 68,  speed: 145, dmg: 15, fireCd: 1.35 + Math.random(), label: 'Weaver' },
-    stalker:    { r: 16, hp: 64,  speed: 255 + Math.min(65, gameState.wave * 5), dmg: 17, fireCd: 99, label: 'Stalker' },
-    husk:       { r: 15, hp: 46,  speed: 215 + Math.min(60, gameState.wave * 5), dmg: 12, fireCd: 99, label: 'Husk' },
-  }[type] || { r: 15, hp: 46, speed: 215, dmg: 12, fireCd: 99, label: 'Husk' };
+  const step = p.comboStep || 0;
+  const isFinisher = step === 2;
+  p.comboStep = (step + 1) % 3;
+  p.comboResetTimer = 1.1;
 
-  const finalHp = Math.round(baseCfg.hp * waveScale * el.hpMult);
+  const cdBase = aspKey === 'volt' ? 0.23 : aspKey === 'cryo' ? 0.33 : 0.40;
+  p.attackCd = cdBase * (isFinisher ? 1.18 : 1.0) * (p.surgeTimer > 0 ? 0.78 : 1);
+  p.swingDir = (p.swingDir || 1) * -1;
+  p.swordSwingOffset = p.swingDir * (isFinisher ? 1.42 : 1.12);
+
+  const extraReach = Math.min(30, (p.forgeLevel || 0) * 4);
+  const radius = (aspKey === 'solar' ? 130 : aspKey === 'cryo' ? 142 : 120) + extraReach + (isFinisher ? 22 : 0);
+  const halfArc = aspKey === 'solar'
+    ? (isFinisher ? 1.48 : 1.15)
+    : aspKey === 'cryo'
+    ? (isFinisher ? 0.92 : 0.68)
+    : (isFinisher ? 1.55 : 1.05);
+
+  const stepMult = isFinisher ? 1.42 : step === 1 ? 1.08 : 1.0;
+  const baseDmg = Math.round((aspKey === 'solar' ? 38 : aspKey === 'cryo' ? 31 : 24) * mult * stepMult);
+  const col = aspKey === 'solar' ? '#ff6a00' : aspKey === 'cryo' ? '#22d3ee' : '#c084fc';
+  const coreCol = aspKey === 'solar' ? '#fef08a' : aspKey === 'cryo' ? '#f0f9ff' : '#fae8ff';
+
+  spawnSlashCrescent(p.x, p.y, p.aimAngle, halfArc, radius * 0.44, radius, col, coreCol, isFinisher ? 0.22 : 0.17);
+  if (isFinisher) {
+    spawnSlashArc(p.x, p.y, radius * 0.92, p.aimAngle, halfArc, coreCol, 0.22);
+    addCameraShake(6.5, Math.cos(p.aimAngle), Math.sin(p.aimAngle));
+  }
+
+  p.vx += Math.cos(p.aimAngle) * (isFinisher ? 165 : 105);
+  p.vy += Math.sin(p.aimAngle) * (isFinisher ? 165 : 105);
+  playSfx('playSlash', aspKey);
+
+  if (isFinisher) {
+    const fxX = p.x + Math.cos(p.aimAngle) * (radius * 0.65);
+    const fxY = p.y + Math.sin(p.aimAngle) * (radius * 0.65);
+    if (aspKey === 'solar') {
+      spawnShockwave(fxX, fxY, 125, '#ff6a00', 5);
+      spawnFloorDecal(fxX, fxY, 48, 'scorch', 8);
+    } else if (aspKey === 'cryo') {
+      for (let k = -1; k <= 1; k++) {
+        const a = p.aimAngle + k * 0.22;
+        gameState.iceShards.push({
+          x: p.x + Math.cos(a) * 24,
+          y: p.y + Math.sin(a) * 24,
+          vx: Math.cos(a) * 520,
+          vy: Math.sin(a) * 520,
+          r: 9,
+          dmg: Math.round(baseDmg * 0.45),
+          life: 0.55,
+          maxLife: 0.55,
+        });
+      }
+    } else if (aspKey === 'volt') {
+      spawnShockwave(p.x, p.y, 130, '#e879f9', 4);
+    }
+  }
+
+  const foes = getAllActiveFoes();
+  let voltChained = 0;
+  for (let i = 0; i < foes.length; i++) {
+    const en = foes[i];
+    if (en.hp <= 0) continue;
+    const dx = en.x - p.x;
+    const dy = en.y - p.y;
+    const d = Math.hypot(dx, dy);
+    if (d <= radius + (en.r || 18)) {
+      const diff = Math.abs(angleDiff(Math.atan2(dy, dx), p.aimAngle));
+      if (diff <= halfArc + 0.22) {
+        const kb = (aspKey === 'solar' ? 250 : aspKey === 'cryo' ? 155 : 120) * (isFinisher ? 1.3 : 1);
+        damageEnemy(en, baseDmg, elem, isFinisher && p.surgeTimer > 0, Math.cos(p.aimAngle) * kb, Math.sin(p.aimAngle) * kb);
+
+        if (aspKey === 'volt' && isFinisher && voltChained < 2) {
+          for (let j = 0; j < foes.length; j++) {
+            const nxt = foes[j];
+            if (nxt === en || nxt.hp <= 0) continue;
+            if (Math.hypot(nxt.x - en.x, nxt.y - en.y) < 190) {
+              spawnLightningArc(en.x, en.y, nxt.x, nxt.y, '#e879f9', 2.8);
+              damageEnemy(nxt, Math.round(baseDmg * 0.48), 'volt', false, 0, 0);
+              voltChained++;
+              break;
+            }
+          }
+        }
+      }
+    }
+  }
+}
+window.performPrimaryAttack = performPrimaryAttack;
+window.triggerPrimaryAttack = performPrimaryAttack;
+
+function performPhaseDash() {
+  const p = gameState.player;
+  if (!p || p.dashCharges <= 0 || p.dashTimer > 0 || gameState.phase !== 'playing') return;
+
+  let dx = 0;
+  let dy = 0;
+  if (isKeyPressed('KeyW', 'w', 'W', 'ArrowUp', 'arrowup')) { dx -= 1; dy -= 1; }
+  if (isKeyPressed('KeyS', 's', 'S', 'ArrowDown', 'arrowdown')) { dx += 1; dy += 1; }
+  if (isKeyPressed('KeyA', 'a', 'A', 'ArrowLeft', 'arrowleft')) { dx -= 1; dy += 1; }
+  if (isKeyPressed('KeyD', 'd', 'D', 'ArrowRight', 'arrowright')) { dx += 1; dy -= 1; }
+
+  const len = Math.hypot(dx, dy);
+  if (len > 0.01) {
+    p.dashDirX = dx / len;
+    p.dashDirY = dy / len;
+  } else {
+    p.dashDirX = Math.cos(p.aimAngle);
+    p.dashDirY = Math.sin(p.aimAngle);
+  }
+
+  p.dashCharges--;
+  p.dashTimer = 0.21;
+  p.invulnTimer = Math.max(p.invulnTimer, 0.3);
+  if ((p.dashShield || 0) > 0) {
+    p.shield = Math.min(p.maxHp * 0.5, (p.shield || 0) + p.dashShield);
+  }
+
+  const aspKey = p.weaponAspect || 'solar';
+  const col = aspKey === 'solar' ? '#ff6a00' : aspKey === 'cryo' ? '#67e8f9' : '#e879f9';
+  spawnSparks(p.x, p.y, 14, col, 65, 210, 2.6);
+
+  if (aspKey === 'cryo') {
+    spawnFloorDecal(p.x, p.y, 52, 'frost', 5);
+    const foes = getAllActiveFoes();
+    for (let i = 0; i < foes.length; i++) {
+      if (Math.hypot(foes[i].x - p.x, foes[i].y - p.y) < 115) {
+        foes[i].slowTimer = Math.max(foes[i].slowTimer || 0, 2.8);
+      }
+    }
+  } else if (aspKey === 'volt') {
+    const foes = getAllActiveFoes();
+    for (let i = 0; i < foes.length; i++) {
+      if (foes[i].hp > 0 && Math.hypot(foes[i].x - p.x, foes[i].y - p.y) < 185) {
+        spawnLightningArc(p.x, p.y, foes[i].x, foes[i].y, '#e879f9', 2.8);
+        damageEnemy(foes[i], Math.round(16 * getPlayerDamageMult()), 'volt', false, 0, 0);
+        break;
+      }
+    }
+  }
+
+  playSfx('playDash');
+}
+window.performPhaseDash = performPhaseDash;
+window.triggerDash = performPhaseDash;
+window.triggerPhaseDash = performPhaseDash;
+
+function castLanceSkill() {
+  const p = gameState.player;
+  if (!p || p.lanceCd > 0 || gameState.phase !== 'playing') return;
+
+  const aspKey = p.weaponAspect || 'solar';
+  const elem = getActiveElementKey(aspKey);
+  const col = aspKey === 'solar' ? '#ff6a00' : aspKey === 'cryo' ? '#22d3ee' : '#e879f9';
+  const dmg = Math.round((aspKey === 'solar' ? 58 : aspKey === 'cryo' ? 50 : 42) * getPlayerDamageMult());
+
+  p.lanceCd = p.lanceMaxCd * getEffectiveCooldownScale();
+  const baseCount = aspKey === 'volt' ? 2 : 1;
+  const count = p.surgeTimer > 0 ? baseCount + 2 : baseCount;
+  const spread = aspKey === 'volt' ? 0.14 : 0.17;
+
+  for (let i = 0; i < count; i++) {
+    const offset = (i - (count - 1) * 0.5) * spread;
+    const ang = p.aimAngle + offset;
+    gameState.playerBolts.push({
+      x: p.x + Math.cos(ang) * 20,
+      y: p.y + Math.sin(ang) * 20,
+      vx: Math.cos(ang) * (aspKey === 'cryo' ? 860 : 750),
+      vy: Math.sin(ang) * (aspKey === 'cryo' ? 860 : 750),
+      r: aspKey === 'solar' ? 14 : 11,
+      dmg,
+      color: col,
+      element: elem,
+      explosive: aspKey === 'solar',
+      chainOnHit: aspKey === 'volt',
+      pierce: aspKey === 'cryo' ? 4 : 1,
+      hitIds: new Set(),
+      life: 1.5,
+    });
+  }
+
+  addCameraShake(5.5, -Math.cos(p.aimAngle), -Math.sin(p.aimAngle));
+  playSfx('playSkill', 'lance');
+}
+window.castLanceSkill = castLanceSkill;
+window.castSkillLance = castLanceSkill;
+
+function castNovaSkill() {
+  const p = gameState.player;
+  if (!p || p.novaCd > 0 || gameState.phase !== 'playing') return;
+
+  const aspKey = p.weaponAspect || 'solar';
+  const elem = getActiveElementKey(aspKey);
+  const col = aspKey === 'solar' ? '#ff6a00' : aspKey === 'cryo' ? '#38bdf8' : '#d946ef';
+  const radius = aspKey === 'solar' ? 245 : aspKey === 'cryo' ? 235 : 255;
+  const dmg = Math.round((aspKey === 'solar' ? 72 : 62) * getPlayerDamageMult());
+
+  p.novaCd = p.novaMaxCd * getEffectiveCooldownScale();
+  spawnShockwave(p.x, p.y, radius, col, 7.5);
+  spawnFloorDecal(p.x, p.y, 102, aspKey === 'cryo' ? 'frost' : aspKey === 'volt' ? 'shock' : 'scorch', 11);
+  gameState.astralRings.push({ x: p.x, y: p.y, r: radius * 0.9, rot: 0, color: col, life: 0.48, maxLife: 0.48 });
+  spawnSparks(p.x, p.y, 38, col, 120, 350, 3.2);
+  addCameraShake(12.5, 0, 1);
+  playSfx('playSkill', 'nova');
+
+  if (aspKey === 'cryo') {
+    for (let s = 0; s < 12; s++) {
+      const a = (s / 12) * Math.PI * 2;
+      gameState.iceShards.push({
+        x: p.x,
+        y: p.y,
+        vx: Math.cos(a) * 460,
+        vy: Math.sin(a) * 460,
+        r: 9,
+        dmg: Math.round(dmg * 0.44),
+        life: 0.68,
+        maxLife: 0.68,
+      });
+    }
+  } else if (aspKey === 'volt') {
+    p.voltHasteTimer = Math.max(p.voltHasteTimer || 0, 2.4);
+  }
+
+  const foes = getAllActiveFoes();
+  for (let i = 0; i < foes.length; i++) {
+    const en = foes[i];
+    if (en.hp <= 0) continue;
+    const d = Math.hypot(en.x - p.x, en.y - p.y);
+    if (d <= radius + (en.r || 18)) {
+      const a = Math.atan2(en.y - p.y, en.x - p.x);
+      if (aspKey === 'volt') {
+        spawnLightningArc(p.x, p.y, en.x, en.y, '#e879f9', 3.2);
+      }
+      damageEnemy(en, dmg, elem, false, Math.cos(a) * 330, Math.sin(a) * 330);
+    }
+  }
+}
+window.castNovaSkill = castNovaSkill;
+window.castSkillNova = castNovaSkill;
+
+function activateOverdrive() {
+  const p = gameState.player;
+  if (!p || p.surgeTimer > 0 || (p.surgeCd || 0) > 0 || gameState.phase !== 'playing') return;
+
+  if (p.surgeGauge < 100) {
+    const bloodCost = Math.round(p.maxHp * 0.2);
+    if (p.hp <= bloodCost + 10) {
+      spawnFloatingText(p.x, p.y - 28, 'LOW HP!', '#ff2a5f', 1.05);
+      return;
+    }
+    p.hp -= bloodCost;
+    spawnFloatingText(p.x, p.y - 44, `BLOOD OVERDRIVE (-${bloodCost} HP)`, '#ff2a5f', 1.22);
+    pushCombatLog(`Sacrificed ${bloodCost} HP to ignite Blood Overdrive!`, '#ff2a5f');
+  } else {
+    spawnFloatingText(p.x, p.y - 38, 'OVERDRIVE UNLEASHED!', '#fbbf24', 1.35);
+    pushCombatLog('Overdrive unleashed!', '#fbbf24');
+  }
+
+  p.surgeGauge = 0;
+  p.surgeTimer = p.surgeDuration;
+  p.surgeCd = p.surgeMaxCd * getEffectiveCooldownScale();
+  p.invulnTimer = Math.max(p.invulnTimer, 0.58);
+
+  gameState.overdriveSigils.push({ x: p.x, y: p.y, r: 140, rot: 0, life: p.surgeDuration, maxLife: p.surgeDuration });
+  spawnShockwave(p.x, p.y, 270, '#ffb800', 8);
+  spawnSparks(p.x, p.y, 44, '#fef08a', 130, 380, 3.6);
+  addCameraShake(14, 0, -1);
+  gameState.chromaticTimer = 0.28;
+  playSfx('playOverdrive');
+}
+window.activateOverdrive = activateOverdrive;
+window.triggerOverdrive = activateOverdrive;
+
+function castCataclysmSkill() {
+  const p = gameState.player;
+  if (!p || p.cataclysmCd > 0 || gameState.phase !== 'playing') return;
+
+  const aspKey = p.weaponAspect || 'solar';
+  const elem = getActiveElementKey(aspKey);
+  const col = aspKey === 'solar' ? '#ff6a00' : aspKey === 'cryo' ? '#38bdf8' : '#e879f9';
+  const tx = clamp(gameState.mouseWorld.x, 80, ARENA_W - 80);
+  const ty = clamp(gameState.mouseWorld.y, 100, ARENA_H - 80);
+  const radius = 265;
+  const dmg = Math.round(135 * getPlayerDamageMult());
+
+  p.cataclysmCd = p.cataclysmMaxCd * getEffectiveCooldownScale();
+  spawnShockwave(tx, ty, radius, col, 9);
+  spawnShockwave(tx, ty, radius * 0.6, '#fef08a', 5);
+  spawnFloorDecal(tx, ty, 118, `crack_${aspKey}`, 16);
+  gameState.astralRings.push({ x: tx, y: ty, r: radius * 0.88, rot: 0, color: '#fef08a', life: 0.72, maxLife: 0.72 });
+  spawnSparks(tx, ty, 58, col, 140, 440, 3.8);
+  addCameraShake(19, 0, 1);
+  triggerHitstop(0.065);
+  gameState.chromaticTimer = 0.32;
+  playSfx('playSkill', 'cataclysm');
+
+  if (aspKey === 'cryo') {
+    for (let s = 0; s < 16; s++) {
+      const a = (s / 16) * Math.PI * 2;
+      gameState.iceShards.push({
+        x: tx,
+        y: ty,
+        vx: Math.cos(a) * 480,
+        vy: Math.sin(a) * 480,
+        r: 10,
+        dmg: Math.round(dmg * 0.35),
+        life: 0.75,
+        maxLife: 0.75,
+      });
+    }
+  } else if (aspKey === 'volt') {
+    for (let b = 0; b < 5; b++) {
+      const bx = tx + randRange(-95, 95);
+      const by = ty + randRange(-70, 70);
+      spawnLightningArc(bx, by - 260, bx, by, '#e879f9', 5);
+    }
+  }
+
+  const foes = getAllActiveFoes();
+  for (let i = 0; i < foes.length; i++) {
+    const en = foes[i];
+    if (en.hp <= 0) continue;
+    const d = Math.hypot(en.x - tx, en.y - ty);
+    if (d <= radius + (en.r || 18)) {
+      const a = Math.atan2(en.y - ty, en.x - tx);
+      damageEnemy(en, dmg, elem, true, Math.cos(a) * 400, Math.sin(a) * 400);
+    }
+  }
+}
+window.castCataclysmSkill = castCataclysmSkill;
+window.castSkillCataclysm = castCataclysmSkill;
+
+// -------------------------------------------------------------------------
+// 8F. ENVIRONMENTAL TACTICS (THERMAL VENTS, ELEMENTAL POOLS & SHRINES)
+// -------------------------------------------------------------------------
+function updateThermalVents(dt) {
+  if (typeof THERMAL_VENTS === 'undefined' || THERMAL_VENTS.length === 0) return;
+
+  gameState.ventCycleTimer += dt;
+  if (gameState.ventCycleTimer >= 6.5) {
+    gameState.ventCycleTimer = 0;
+    const p = gameState.player;
+    const foes = getAllActiveFoes();
+
+    for (let v = 0; v < THERMAL_VENTS.length; v++) {
+      const vent = THERMAL_VENTS[v];
+      spawnShockwave(vent.x, vent.y, 105, '#ff6a00', 4.5);
+      spawnSparks(vent.x, vent.y, 16, '#fbbf24', 80, 240, 2.8);
+
+      for (let i = 0; i < foes.length; i++) {
+        const en = foes[i];
+        if (en.hp > 0 && Math.hypot(en.x - vent.x, en.y - vent.y) < 105) {
+          damageEnemy(en, Math.round(28 * getPlayerDamageMult()), 'fire', false, 0, 0);
+        }
+      }
+
+      if (p && Math.hypot(p.x - vent.x, p.y - vent.y) < 88) {
+        damagePlayer(10, vent.x, vent.y);
+      }
+    }
+  } else if (gameState.ventCycleTimer > 5.4 && Math.random() < 0.35) {
+    const vent = THERMAL_VENTS[Math.floor(Math.random() * THERMAL_VENTS.length)];
+    spawnSparks(vent.x, vent.y, 3, '#fbbf24', 30, 90, 2);
+  }
+}
+
+function updateMapShrinesAndPools(dt) {
+  const p = gameState.player;
+  if (!p) return;
+
+  if (typeof MAP_SHRINES !== 'undefined') {
+    for (let i = 0; i < MAP_SHRINES.length; i++) {
+      const sh = MAP_SHRINES[i];
+      if (sh.used) continue;
+      if (Math.hypot(p.x - sh.x, p.y - sh.y) < sh.r + 24) {
+        sh.used = true;
+        gameState.shrinesCollected++;
+        if (sh.kind === 'heal_spring') {
+          const healAmt = Math.round(p.maxHp * 0.28);
+          p.hp = Math.min(p.maxHp, p.hp + healAmt);
+          p.shield = Math.min(p.maxHp * 0.5, (p.shield || 0) + 30);
+          spawnFloatingText(sh.x, sh.y - 20, `+${healAmt} HP & SHIELD`, '#2dd4bf', 1.22);
+          pushCombatLog('Sanctum Spring restored HP & granted a Barrier!', '#2dd4bf');
+        } else if (sh.kind === 'ember_altar') {
+          p.surgeGauge = Math.min(100, (p.surgeGauge || 0) + 50);
+          p.shrineFuryTimer = 8.0;
+          spawnFloatingText(sh.x, sh.y - 20, '+50% SURGE & FURY', '#fbbf24', 1.22);
+          pushCombatLog('Surge Altar ignited Overdrive Gauge & +18% DMG (8s)!', '#fbbf24');
+        } else {
+          const bonusShards = 4 + Math.floor(gameState.wave * 0.5);
+          p.shards = (p.shards || 0) + bonusShards;
+          spawnFloatingText(sh.x, sh.y - 20, `+${bonusShards} SHARDS`, '#38bdf8', 1.22);
+          pushCombatLog(`Relic Crystal harvested (+${bonusShards} Shards)!`, '#38bdf8');
+        }
+        spawnShockwave(sh.x, sh.y, 135, '#67e8f9', 4.5);
+        spawnSparks(sh.x, sh.y, 24, '#67e8f9', 85, 240, 3);
+        playSfx('playPickup');
+      }
+    }
+  }
+
+  p.inIcePool = false;
+  if (typeof MAP_POOLS === 'undefined' || MAP_POOLS.length === 0) return;
+
+  const foes = getAllActiveFoes();
+  for (let i = 0; i < MAP_POOLS.length; i++) {
+    const pl = MAP_POOLS[i];
+
+    const pnx = (p.x - pl.x) / pl.rx;
+    const pny = (p.y - pl.y) / pl.ry;
+    if (pnx * pnx + pny * pny <= 1) {
+      if (pl.kind === 'ice') {
+        p.inIcePool = true;
+        p.x += p.vx * dt * 0.22;
+        p.y += p.vy * dt * 0.22;
+      } else if (pl.kind === 'lava' && p.invulnTimer <= 0 && p.dashTimer <= 0) {
+        p.lavaTick = (p.lavaTick || 0) + dt;
+        if (p.lavaTick >= 0.48) {
+          p.lavaTick = 0;
+          p.hp = Math.max(1, p.hp - 4);
+          spawnFloatingText(p.x, p.y - 24, 'LAVA -4', '#ff6a00', 0.9);
+        }
+      } else if (pl.kind === 'turquoise') {
+        p.springTick = (p.springTick || 0) + dt;
+        if (p.springTick >= 0.65 && p.hp < p.maxHp) {
+          p.springTick = 0;
+          p.hp = Math.min(p.maxHp, p.hp + 2);
+        }
+      } else if (pl.kind === 'void' && p.surgeTimer <= 0 && (p.surgeCd || 0) <= 0) {
+        p.surgeGauge = Math.min(100, p.surgeGauge + dt * 6);
+      }
+    }
+
+    for (let j = 0; j < foes.length; j++) {
+      const en = foes[j];
+      if (en.hp <= 0) continue;
+      const enx = (en.x - pl.x) / pl.rx;
+      const eny = (en.y - pl.y) / pl.ry;
+      if (enx * enx + eny * eny <= 1) {
+        if (pl.kind === 'lava') {
+          en.burnTimer = Math.max(en.burnTimer || 0, 2.0);
+        } else if (pl.kind === 'ice') {
+          en.slowTimer = Math.max(en.slowTimer || 0, 1.8);
+        } else if (pl.kind === 'void') {
+          en.shockTimer = Math.max(en.shockTimer || 0, 2.0);
+        }
+      }
+    }
+  }
+}
+
+// -------------------------------------------------------------------------
+// 8G. WAVE, BIOME, ENEMY & 4-ARCHETYPE BOSS SPAWNING (ENDLESS WAVES)
+// -------------------------------------------------------------------------
+function findSafeSpawnPoint(minDistFromPlayer = 380) {
+  const p = gameState.player;
+  for (let attempt = 0; attempt < 28; attempt++) {
+    const sx = randRange(170, ARENA_W - 170);
+    const sy = randRange(190, ARENA_H - 170);
+    if (p && Math.hypot(sx - p.x, sy - p.y) < minDistFromPlayer) continue;
+    if (checkProjectileHitPillar(sx, sy, 40)) continue;
+    return { x: sx, y: sy };
+  }
+  return { x: ARENA_W * 0.5, y: 260 };
+}
+
+function spawnEnemyOfType(type, waveNum) {
+  const waveScale = 1 + (waveNum - 1) * 0.22;
+  const pt = findSafeSpawnPoint(360);
+
+  const elPool = ['normal', 'fire', 'ice', 'volt'];
+  const elRoll = Math.random();
+  const element = elRoll < 0.34 ? 'normal' : elPool[1 + Math.floor(Math.random() * 3)];
+
+  const baseStats = {
+    husk:       { hp: 64,  speed: Math.min(208, 130 + waveNum * 4), dmg: 12, r: 16, name: 'HUSK' },
+    weaver:     { hp: 56,  speed: Math.min(148, 98 + waveNum * 2),  dmg: 14, r: 17, name: 'WEAVER' },
+    juggernaut: { hp: 175, speed: Math.min(126, 84 + waveNum * 2),  dmg: 22, r: 24, name: 'JUGGERNAUT' },
+    stalker:    { hp: 82,  speed: Math.min(248, 168 + waveNum * 5), dmg: 16, r: 15, name: 'STALKER' },
+  };
+  const cfg = baseStats[type] || baseStats.husk;
+  const maxHp = Math.round(cfg.hp * waveScale);
+
   gameState.enemies.push({
-    type,
-    element: el.key,
-    displayName: `${el.prefix}${baseCfg.label}`,
-    x,
-    y,
+    x: pt.x,
+    y: pt.y,
     vx: 0,
     vy: 0,
-    r: baseCfg.r,
-    hp: finalHp,
-    maxHp: finalHp,
-    speed: Math.round(baseCfg.speed * el.spdMult),
-    dmg: Math.round(baseCfg.dmg * waveScale * el.dmgMult),
-    fireCd: baseCfg.fireCd,
-    slowTimer: 0,
-    burnTimer: 0,
-    shockTimer: 0,
-    vulnTimer: 0,
-    reactionCd: 0,
+    r: cfg.r,
+    type,
+    element,
+    displayName: element === 'normal' ? cfg.name : `${element.toUpperCase()} ${cfg.name}`,
+    hp: maxHp,
+    maxHp,
+    speed: cfg.speed,
+    dmg: Math.round(cfg.dmg * (1 + (waveNum - 1) * 0.14)),
+    attackCd: randRange(0.7, 2.0),
+    abilityCd: randRange(2.4, 4.2),
+    strafeDir: Math.random() < 0.5 ? 1 : -1,
+    chargeTimer: 0,
+    chargeDirX: 0,
+    chargeDirY: 0,
+    stunTimer: 0,
     hitFlash: 0,
     squash: 0,
+    burnTimer: 0,
+    slowTimer: 0,
+    shockTimer: 0,
+    vulnTimer: 0,
+    dotTick: 0,
+    _deadHandled: false,
   });
 }
 
-function spawnArenaBoss() {
-  const order = ['sovereign', 'cryo_archon', 'volt_tyrant'];
-  const archKey = order[(Math.floor(gameState.wave / 2) - 1) % order.length] || 'sovereign';
-  const arch = BOSS_ARCHETYPES[archKey] || BOSS_ARCHETYPES.sovereign;
-  const bossMaxHp = Math.round((980 + (gameState.wave - 1) * 340) * arch.hpMult);
-
-  const pool = BOSS_VISUAL_FORMS.filter((f) => f !== gameState.lastBossForm);
-  const visualForm = pool[Math.floor(Math.random() * pool.length)] || BOSS_VISUAL_FORMS[0];
+function spawnBossForWave(waveNum) {
+  const forms = ['boss_overlord', 'boss_wyrm', 'boss_lich', 'boss_golem'];
+  const available = forms.filter((f) => f !== gameState.lastBossForm);
+  const visualForm = available[Math.floor(Math.random() * available.length)];
   gameState.lastBossForm = visualForm;
 
-  const formTitle = {
-    boss_overlord: 'OVERLORD',
-    boss_wyrm: 'DREAD WYRM',
-    boss_lich: 'ARCH-LICH',
-    boss_golem: 'COLOSSUS',
-  }[visualForm] || 'WARDEN';
+  const archKeys = typeof BOSS_ARCHETYPES !== 'undefined' ? Object.keys(BOSS_ARCHETYPES) : ['sovereign'];
+  const archetype = archKeys[(Math.floor(waveNum / 2) - 1) % archKeys.length];
+  const archInfo = (typeof BOSS_ARCHETYPES !== 'undefined' && BOSS_ARCHETYPES[archetype]) || {
+    prefix: 'OBSIDIAN OVERLORD',
+  };
+
+  const maxHp = Math.round(820 * (1 + (waveNum - 1) * 0.34));
+  const pt = findSafeSpawnPoint(460);
 
   gameState.boss = {
-    archetype: arch.key,
-    visualForm,
-    name: `${arch.prefix} ${formTitle} // MK-${gameState.wave}`,
-    x: ARENA_W * 0.5,
-    y: 280,
+    x: pt.x,
+    y: pt.y,
     vx: 0,
     vy: 0,
-    r: 44,
-    hp: bossMaxHp,
-    maxHp: bossMaxHp,
-    speed: Math.round(148 * arch.speedMult),
-    dmg: 22,
+    r: 34,
+    type: 'boss',
+    name: archInfo.name || archInfo.prefix || 'OBSIDIAN OVERLORD',
+    archetype,
+    visualForm,
+    element: ['fire', 'ice', 'volt'][waveNum % 3],
     phase: 1,
-    patternIndex: 0,
-    patternTimer: arch.patternCd,
+    hp: maxHp,
+    maxHp,
+    speed: Math.min(188, 120 + waveNum * 3),
+    dmg: Math.round(24 * (1 + (waveNum - 1) * 0.14)),
+    skillCd: 2.6,
+    patternIdx: 0,
+    chargeTimer: 0,
+    chargeDirX: 0,
+    chargeDirY: 0,
+    stunTimer: 0,
     telegraph: null,
-    slowTimer: 0,
+    hitFlash: 0,
+    squash: 0,
     burnTimer: 0,
+    slowTimer: 0,
     shockTimer: 0,
     vulnTimer: 0,
-    reactionCd: 0,
-    hitFlash: 0,
+    dotTick: 0,
+    _deadHandled: false,
   };
-  pushCombatLog(
-    currentLang === 'th'
-      ? `คำเตือน: บอส ${gameState.boss.name} ปรากฏตัว!`
-      : `WARNING: ${gameState.boss.name} HAS AWAKENED!`,
-    'rose'
-  );
-  triggerDirectionalShake(10);
-  if (typeof playMusicStinger === 'function') playMusicStinger('boss_intro');
-  playCombatSfx('nova', 0.72);
-}
 
-function pickWaveElement(waveNum) {
-  if (waveNum === 1) return 'fire';
-  if (waveNum === 2) {
-    const r = Math.random();
-    if (r < 0.55) return 'normal';
-    if (r < 0.70) return 'fire';
-    if (r < 0.85) return 'ice';
-    return 'volt';
-  }
-  const table = ['normal', 'fire', 'ice', 'volt'];
-  return table[Math.floor(Math.random() * table.length)];
+  spawnShockwave(pt.x, pt.y, 280, '#ff2a5f', 7.5);
+  spawnFloatingText(pt.x, pt.y - 46, `BOSS: ${gameState.boss.name}`, '#ff2a5f', 1.42);
+  playSfx('setMusicIntensity', 'boss');
+  pushCombatLog(`WARNING: ${gameState.boss.name} appeared!`, '#ff2a5f');
 }
 
 function startWave(waveNum) {
   gameState.wave = waveNum;
   gameState.portalOpen = false;
-  gameState.waveSpawnQueue = [];
-  gameState.waveSpawnTimer = 0.45;
+  gameState.enemies.length = 0;
+  gameState.boss = null;
+  gameState.enemyProjectiles.length = 0;
+  gameState.ventCycleTimer = 0;
+
+  const p = gameState.player;
+  if (p && waveNum > 1) {
+    p.skillPoints = (p.skillPoints || 0) + 1;
+    const shardGain = 5 + (p.shardBonus || 0);
+    p.shards = (p.shards || 0) + shardGain;
+    spawnFloatingText(p.x, p.y - 42, `WAVE ${waveNum} // +1 SP +${shardGain} SHARDS`, '#67e8f9', 1.22);
+    pushCombatLog(`Wave ${waveNum} started (+1 Skill Point, +${shardGain} Shards).`, '#67e8f9');
+  }
+
+  const baseCount = Math.min(28, 7 + waveNum * 2);
+  for (let i = 0; i < baseCount; i++) {
+    const r = Math.random();
+    if (r < 0.42) spawnEnemyOfType('husk', waveNum);
+    else if (r < 0.68) spawnEnemyOfType('weaver', waveNum);
+    else if (r < 0.85) spawnEnemyOfType('stalker', waveNum);
+    else spawnEnemyOfType('juggernaut', waveNum);
+  }
 
   if (waveNum % 2 === 0) {
-    spawnArenaBoss();
+    spawnBossForWave(waveNum);
+  } else {
+    playSfx('setMusicIntensity', 'combat');
   }
-
-  const huskCount = 5 + waveNum * 3;
-  const weaverCount = waveNum >= 2 ? 2 + Math.floor(waveNum * 1.2) : 2;
-  const juggernautCount = waveNum >= 2 ? 1 + Math.floor(waveNum * 0.9) : 0;
-  const stalkerCount = waveNum >= 2 ? 1 + Math.floor(waveNum * 0.8) : 0;
-
-  for (let i = 0; i < huskCount; i++) gameState.waveSpawnQueue.push({ type: 'husk', element: pickWaveElement(waveNum) });
-  for (let i = 0; i < weaverCount; i++) gameState.waveSpawnQueue.push({ type: 'weaver', element: pickWaveElement(waveNum) });
-  for (let i = 0; i < juggernautCount; i++) gameState.waveSpawnQueue.push({ type: 'juggernaut', element: pickWaveElement(waveNum) });
-  for (let i = 0; i < stalkerCount; i++) gameState.waveSpawnQueue.push({ type: 'stalker', element: pickWaveElement(waveNum) });
-
-  for (let i = gameState.waveSpawnQueue.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [gameState.waveSpawnQueue[i], gameState.waveSpawnQueue[j]] = [
-      gameState.waveSpawnQueue[j],
-      gameState.waveSpawnQueue[i],
-    ];
-  }
-
-  if (gameState.player) {
-    // พร Solar Aegis: รีเกราะเต็มใหม่ทุกเวฟ
-    if ((gameState.player.maxShield || 0) > 0) {
-      gameState.player.shield = gameState.player.maxShield;
-    }
-    if (waveNum > 1) {
-      gameState.player.skillPoints = (gameState.player.skillPoints || 0) + 1;
-      gameState.player.shards = (gameState.player.shards || 0) + 5 + (gameState.player.bonusShardDrop || 0);
-    }
-  }
-
-  const biome = ROOM_BIOMES[gameState.biomeIndex % ROOM_BIOMES.length];
-  pushCombatLog(`${I18N[currentLang].logWaveStart(waveNum)} // ${biome.name[currentLang]}`, 'amber');
-  addFloatingText(gameState.player.x, gameState.player.y - 45, `WAVE ${waveNum}`, '#ffb800', 1.35);
 }
-
-function openNextWaveTunnel() {
-  gameState.portalOpen = true;
-  triggerDirectionalShake(7);
-  playCombatSfx('surge', 0.92);
-  addFloatingText(TUNNEL_GATE.x, TUNNEL_GATE.y + 36, 'TUNNEL OPEN!', '#22d3ee', 1.3);
-  pushCombatLog(
-    currentLang === 'th'
-      ? 'ประตูอุโมงค์เปิดออกแล้ว! เดินขึ้นไปเข้าอุโมงค์เพื่อบุกแมพถัดไป'
-      : 'TUNNEL UNSEALED! Walk into the northern archway to enter the next chamber.',
-    'cyan'
-  );
-}
+window.startWave = startWave;
 
 function enterNextWaveTunnel() {
   if (!gameState.portalOpen || gameState.transitionTimer > 0) return;
   gameState.portalOpen = false;
   gameState.transitionTimer = 0.85;
   gameState.transitionSwapped = false;
-  playCombatSfx('dodge', 0.8);
+  playSfx('playPortal');
 }
 
-function spawnLootOrb(x, y, kind = 'xp') {
-  const ang = Math.random() * Math.PI * 2;
-  const spd = 70 + Math.random() * 130;
-  gameState.loots.push({
-    kind, // 'xp' | 'heal' | 'surge'
-    x,
-    y,
-    vx: Math.cos(ang) * spd,
-    vy: Math.sin(ang) * spd,
-    r: kind === 'xp' ? 6 : 9,
-    life: 18,
+function spawnLobbyDummy() {
+  gameState.enemies.push({
+    x: LOBBY_DUMMY_POS.x,
+    y: LOBBY_DUMMY_POS.y,
+    vx: 0,
+    vy: 0,
+    r: 22,
+    type: 'dummy',
+    isDummy: true,
+    element: 'normal',
+    displayName: 'TRAINING DUMMY',
+    hp: 99999,
+    maxHp: 99999,
+    speed: 0,
+    dmg: 0,
+    attackCd: 99,
+    abilityCd: 99,
+    strafeDir: 1,
+    chargeTimer: 0,
+    chargeDirX: 0,
+    chargeDirY: 0,
+    stunTimer: 0,
+    hitFlash: 0,
+    squash: 0,
+    burnTimer: 0,
+    slowTimer: 0,
+    shockTimer: 0,
+    vulnTimer: 0,
+    dotTick: 0,
+    _deadHandled: false,
   });
 }
 
-function applyElementalAura(en, incomingEl, triggerDmg = 28) {
-  if (!en || en.hp <= 0 || !incomingEl || incomingEl === 'normal') return;
-
-  const p = gameState.player;
-  const baseDmg = p ? p.baseDamage * getAttackMultiplier() : triggerDmg;
-  const reactMult = p ? (p.reactionBonusMult || 1.0) : 1.0;
-  const reactCdVal = reactMult > 1.0 ? 0.18 : 0.28;
-
-  const hasFire = (en.burnTimer || 0) > 0 || en.element === 'fire';
-  const hasIce = (en.slowTimer || 0) > 0 || en.element === 'ice';
-  const hasVolt = (en.shockTimer || 0) > 0 || en.element === 'volt';
-
-  let triggered = false;
-
-  if ((en.reactionCd || 0) <= 0) {
-    // 1. MELT (ไฟ + น้ำแข็ง) -> ดาเมจเดี่ยวรุนแรง +75% & เติมเกจ Overdrive +5%
-    if ((incomingEl === 'fire' && hasIce) || (incomingEl === 'ice' && hasFire)) {
-      triggered = true;
-      en.reactionCd = reactCdVal;
-      en.burnTimer = 0;
-      en.slowTimer = Math.max(0, (en.slowTimer || 0) * 0.45);
-
-      const bonus = Math.max(40, Math.round(triggerDmg * 0.75 * reactMult));
-      en.hp -= bonus;
-      en.hitFlash = 0.14;
-      if (p && p.surgeTimer <= 0 && (p.surgeCd || 0) <= 0) {
-        p.surgeGauge = Math.min(100, (p.surgeGauge || 0) + 5);
-      }
-      gameState.shockwaves.push({ x: en.x, y: en.y, r: 10, maxR: 96, life: 0.24, maxLife: 0.24, color: '#fb923c', lineWidth: 4.5 });
-      gameState.shockwaves.push({ x: en.x, y: en.y, r: 8, maxR: 72, life: 0.2, maxLife: 0.2, color: '#38bdf8', lineWidth: 3 });
-      spawnSparks(en.x, en.y, '#fb923c', 12, 260);
-      spawnSparks(en.x, en.y, '#e0f2fe', 10, 220);
-      addFloatingText(en.x, en.y - en.r - 22, `MELT! +${bonus}`, '#fb923c', 1.35);
-      playCombatSfx('ice_burst', 1.22);
-      if (en.hp <= 0) damageEnemy(en, 0, 0, 0, true);
-    }
-    // 2. OVERLOAD (ไฟ + สายฟ้า) -> ระเบิดหมู่ AoE 165px + กระเด็น + สโลว์ชะงัก + Overdrive +4%
-    else if ((incomingEl === 'fire' && hasVolt) || (incomingEl === 'volt' && hasFire)) {
-      triggered = true;
-      en.reactionCd = reactCdVal;
-      en.burnTimer = 0;
-      en.shockTimer = 0;
-
-      const blastR = 165;
-      const blastDmg = Math.round(baseDmg * 1.55 * reactMult);
-      if (p && p.surgeTimer <= 0 && (p.surgeCd || 0) <= 0) {
-        p.surgeGauge = Math.min(100, (p.surgeGauge || 0) + 4);
-      }
-      addFloorDecal(en.x, en.y, 70, 'scorch');
-      gameState.shockwaves.push({ x: en.x, y: en.y, r: 14, maxR: blastR, life: 0.28, maxLife: 0.28, color: '#f43f5e', lineWidth: 5 });
-      gameState.shockwaves.push({ x: en.x, y: en.y, r: 10, maxR: blastR * 0.72, life: 0.22, maxLife: 0.22, color: '#c084fc', lineWidth: 3.5 });
-      spawnSparks(en.x, en.y, '#ff6a00', 16, 300);
-      spawnSparks(en.x, en.y, '#e879f9', 14, 280);
-      triggerDirectionalShake(7.5);
-      addFloatingText(en.x, en.y - en.r - 24, `OVERLOAD! ${blastDmg}`, '#f43f5e', 1.38);
-      playCombatSfx('volt_shock', 1.08);
-
-      const allFoes = gameState.boss && gameState.boss.hp > 0 ? [...gameState.enemies, gameState.boss] : gameState.enemies;
-      for (let i = allFoes.length - 1; i >= 0; i--) {
-        const foe = allFoes[i];
-        if (!foe || foe.hp <= 0) continue;
-        const dx = foe.x - en.x;
-        const dy = foe.y - en.y;
-        const d = Math.hypot(dx, dy) || 1;
-        if (d <= blastR + foe.r) {
-          foe.slowTimer = Math.max(foe.slowTimer || 0, 0.6);
-          damageEnemy(foe, blastDmg, (dx / d) * 410, (dy / d) * 410, true);
-        }
-      }
-    }
-    // 3. SUPERCONDUCT (น้ำแข็ง + สายฟ้า) -> ชิ่งสายฟ้า 5 เป้า + เกราะแตก (+30% ดาเมจ 5 วิ) + ลด CD สกิล 0.4 วิ
-    else if ((incomingEl === 'ice' && hasVolt) || (incomingEl === 'volt' && hasIce)) {
-      triggered = true;
-      en.reactionCd = reactCdVal;
-      en.shockTimer = 0;
-      en.slowTimer = Math.max(en.slowTimer || 0, 2.8);
-      en.vulnTimer = 5.0;
-
-      if (p) {
-        p.lanceCd = Math.max(0, (p.lanceCd || 0) - 0.4);
-        p.novaCd = Math.max(0, (p.novaCd || 0) - 0.4);
-      }
-
-      const chainDmg = Math.round(baseDmg * 1.20 * reactMult);
-      addFloatingText(en.x, en.y - en.r - 24, 'SUPERCONDUCT!', '#38bdf8', 1.3);
-      playCombatSfx('volt_shock', 1.35);
-
-      const allFoes = gameState.boss && gameState.boss.hp > 0 ? [...gameState.enemies, gameState.boss] : gameState.enemies;
-      let prevX = en.x;
-      let prevY = en.y;
-      let chains = 0;
-      for (let i = allFoes.length - 1; i >= 0; i--) {
-        const foe = allFoes[i];
-        if (!foe || foe.hp <= 0) continue;
-        if (Math.hypot(foe.x - en.x, foe.y - en.y) <= 240 + foe.r && chains < 5) {
-          foe.vulnTimer = 5.0;
-          foe.slowTimer = Math.max(foe.slowTimer || 0, 2.4);
-          spawnLightningBranch(prevX, prevY, foe.x, foe.y, '#67e8f9', 2.8);
-          spawnSparks(foe.x, foe.y, '#c084fc', 8, 210);
-          damageEnemy(foe, chainDmg, 0, 0, true);
-          prevX = foe.x;
-          prevY = foe.y;
-          chains++;
-        }
-      }
-    }
-  }
-
-  if (!triggered && en.hp > 0) {
-    if (incomingEl === 'fire') en.burnTimer = Math.max(en.burnTimer || 0, 3.6);
-    else if (incomingEl === 'ice') en.slowTimer = Math.max(en.slowTimer || 0, 3.4);
-    else if (incomingEl === 'volt') en.shockTimer = Math.max(en.shockTimer || 0, 3.8);
-  }
-}
-
-function damageEnemy(en, amount, kbX = 0, kbY = 0, isCrit = false) {
-  if (!en) return;
-  if ((en.vulnTimer || 0) > 0 && amount > 0) {
-    amount = Math.round(amount * 1.30);
-  }
-  // พร Executioner's Mark: ตีศัตรูเลือดต่ำกว่า 40% แรงขึ้น
-  if (gameState.player && (gameState.player.execBonus || 0) > 0 && en.hp / en.maxHp <= 0.4 && amount > 0) {
-    amount = Math.round(amount * (1 + gameState.player.execBonus));
-  }
-
-  en.hp -= amount;
-  en.vx += kbX;
-  en.vy += kbY;
-  en.hitFlash = 0.09;
-  en.squash = 0.35;
-
-  if (amount > 0) {
-    gameState.combo++;
-    gameState.comboTimer = 3.6;
-    const dispAmount = isCrit ? `${amount}!` : `${amount}`;
-    addFloatingText(
-      en.x + (Math.random() - 0.5) * 18,
-      en.y - en.r - 6,
-      dispAmount,
-      isCrit ? '#ffb800' : '#f8fafc',
-      isCrit ? 1.24 : 1.0
-    );
-    playCombatSfx('hit', isCrit ? 1.25 : 1.0);
-  }
-
-  if (en === gameState.boss) {
-    if (en.hp <= en.maxHp * 0.5 && en.phase === 1) {
-      en.phase = 2;
-      en.speed *= 1.32;
-      addFloorDecal(en.x, en.y, 90, 'scorch');
-      gameState.shockwaves.push({
-        x: en.x,
-        y: en.y,
-        r: 20,
-        maxR: 330,
-        life: 0.45,
-        maxLife: 0.45,
-        color: '#ff2a5f',
-        lineWidth: 6,
-      });
-      triggerDirectionalShake(12);
-      if (typeof playMusicStinger === 'function') playMusicStinger('boss_phase2');
-      pushCombatLog(I18N[currentLang].logBossPhase2, 'rose');
-      addFloatingText(en.x, en.y - 54, 'PHASE 2 // ENRAGE!', '#ff2a5f', 1.35);
-    }
-
-    if (en.hp <= 0) {
-      gameState.score += 1200 * gameState.wave;
-      gameState.kills++;
-      const killLeech = getEquippedRelicStat('leech');
-      if (killLeech > 0 && gameState.player) {
-        gameState.player.hp = Math.min(gameState.player.maxHp, gameState.player.hp + killLeech);
-      }
-      addFloorDecal(en.x, en.y, 105, 'scorch');
-      spawnSparks(en.x, en.y, '#ffb800', 36, 340);
-      spawnSparks(en.x, en.y, '#ff2a5f', 24, 280);
-      for (let k = 0; k < 8; k++) spawnLootOrb(en.x, en.y, 'xp');
-      spawnLootOrb(en.x, en.y, 'heal');
-      spawnLootOrb(en.x, en.y, 'surge');
-      if (gameState.player) {
-        const bonusShd = 25 + (gameState.player.bonusShardDrop || 0) * 2;
-        gameState.player.shards = (gameState.player.shards || 0) + bonusShd;
-        gameState.player.inventoryRelics = gameState.player.inventoryRelics || [];
-        gameState.player.inventoryRelics.push(rollArpgRelic('mythic'));
-        addFloatingText(en.x, en.y - 72, `+${bonusShd} SHARDS & MYTHIC RELIC!`, '#ffb800', 1.25);
-      }
-      gameState.boss = null;
-      triggerDirectionalShake(14);
-      if (typeof playMusicStinger === 'function') playMusicStinger('boss_victory');
-    }
-    return;
-  }
-
-  if (en.hp <= 0) {
-    const idx = gameState.enemies.indexOf(en);
-    if (idx === -1) return;
-    gameState.enemies.splice(idx, 1);
-
-    if (((en.burnTimer || 0) > 0 && hasConstellation('sol_3')) || en.element === 'fire') {
-      gameState.shockwaves.push({
-        x: en.x,
-        y: en.y,
-        r: 12,
-        maxR: en.element === 'fire' ? 88 : 135,
-        life: 0.24,
-        maxLife: 0.24,
-        color: '#ff6a00',
-        lineWidth: 3.5,
-      });
-      if ((en.burnTimer || 0) > 0 && hasConstellation('sol_3')) {
-        for (let k = gameState.enemies.length - 1; k >= 0; k--) {
-          const other = gameState.enemies[k];
-          if (other && other.hp > 0 && Math.hypot(other.x - en.x, other.y - en.y) <= 135) {
-            other.hp -= Math.round((gameState.player ? gameState.player.baseDamage : 28) * 1.1);
-          }
-        }
-      }
-    }
-
-    const killLeech = getEquippedRelicStat('leech');
-    if (killLeech > 0 && gameState.player) {
-      gameState.player.hp = Math.min(gameState.player.maxHp, gameState.player.hp + killLeech);
-    }
-
-    gameState.dissolvingCorpses.push({
-      x: en.x,
-      y: en.y,
-      r: en.r,
-      type: en.type,
-      life: 0.65,
-      maxLife: 0.65,
-    });
-
-    gameState.kills++;
-    const pts = en.type === 'juggernaut' ? 220 : en.type === 'weaver' ? 160 : 100;
-    gameState.score += pts * (1 + Math.floor(gameState.combo / 10));
-    addFloorDecal(en.x, en.y, en.r * 1.4, en.element === 'ice' ? 'frost' : 'scorch');
-    const elInfo = MONSTER_ELEMENTS[en.element || 'normal'] || MONSTER_ELEMENTS.normal;
-    spawnSparks(en.x, en.y, elInfo.color, 16, 240);
-
-    spawnLootOrb(en.x, en.y, 'xp');
-    if (Math.random() < 0.16) spawnLootOrb(en.x, en.y, 'heal');
-    else if (Math.random() < 0.22) spawnLootOrb(en.x, en.y, 'surge');
-    if (gameState.player && (en.type === 'juggernaut' || en.type === 'stalker')) {
-      gameState.player.shards = (gameState.player.shards || 0) + 4 + (gameState.player.bonusShardDrop || 0);
-      if (Math.random() < 0.35) {
-        gameState.player.inventoryRelics = gameState.player.inventoryRelics || [];
-        gameState.player.inventoryRelics.push(rollArpgRelic());
-      }
-    }
-  }
-}
-
-function damagePlayer(amount) {
-  const p = gameState.player;
-  if (!p || gameState.phase !== 'playing') return;
-
-  if (p.invulnTimer > 0) {
-    addFloatingText(p.x, p.y - 26, 'PHASED', '#22d3ee', 0.95);
-    return;
-  }
-
-  // พร Obsidian Thorns: ลดความเสียหายที่รับ
-  amount = Math.max(1, Math.round(amount * (1 - (p.dmgReduction || 0))));
-
-  // พร Solar Aegis: เกราะดูดซับดาเมจก่อนหัก HP
-  if ((p.shield || 0) > 0) {
-    const absorbed = Math.min(p.shield, amount);
-    p.shield -= absorbed;
-    amount -= absorbed;
-    addFloatingText(p.x, p.y - 36, `SHIELD -${absorbed}`, '#2dd4bf', 1.0);
-  }
-
-  // พร Obsidian Thorns: ระเบิดคลื่นสวนกลับเมื่อโดนตี
-  if ((p.thornsLevel || 0) > 0) {
-    const thornDmg = Math.round(p.baseDamage * 1.35 * p.thornsLevel * getAttackMultiplier());
-    gameState.shockwaves.push({
-      x: p.x, y: p.y, r: 16, maxR: 170, life: 0.28, maxLife: 0.28, color: '#34d399', lineWidth: 4.5,
-    });
-    const foes = gameState.boss && gameState.boss.hp > 0 ? [...gameState.enemies, gameState.boss] : gameState.enemies;
-    for (let i = foes.length - 1; i >= 0; i--) {
-      const foe = foes[i];
-      if (!foe || foe.hp <= 0) continue;
-      const dx = foe.x - p.x;
-      const dy = foe.y - p.y;
-      const d = Math.hypot(dx, dy) || 1;
-      if (d <= 170 + foe.r) {
-        damageEnemy(foe, thornDmg, (dx / d) * 340, (dy / d) * 340, true);
-      }
-    }
-  }
-
-  p.invulnTimer = 0.65;
-  if (amount > 0) {
-    p.hp = Math.max(0, p.hp - amount);
-    gameState.combo = 0;
-    triggerDirectionalShake(10);
-    gameState.hitstopTimer = 0.04;
-    spawnSparks(p.x, p.y, '#ff2a5f', 14, 220);
-    addFloatingText(p.x, p.y - 24, `-${amount}`, '#ff2a5f', 1.15);
-    playCombatSfx('hurt', 1.0);
-  } else {
-    triggerDirectionalShake(5);
-    spawnSparks(p.x, p.y, '#2dd4bf', 12, 200);
-    playCombatSfx('hit', 0.85);
-  }
-
-  if (p.hp <= 0) {
-    triggerGameOver();
-  }
-}
-
-// -------------------------------------------------------------------------
-// 7. SMART 3-BRANCH UPGRADE DRAFT & RUN LIFECYCLE
-// -------------------------------------------------------------------------
-function openWaveUpgradeDraft() {
-  gameState.phase = 'upgrade';
-  const byBranch = {};
-  RELIC_POOL.forEach((r) => {
-    const b = r.branch || 'misc';
-    if (!byBranch[b]) byBranch[b] = [];
-    byBranch[b].push(r);
-  });
-  const branches = Object.keys(byBranch).sort(() => Math.random() - 0.5).slice(0, 3);
-  gameState.pendingUpgrades = branches.map((b) => {
-    const list = byBranch[b];
-    return list[Math.floor(Math.random() * list.length)];
-  });
-  renderUpgradeChoices(gameState.pendingUpgrades);
-  document.getElementById('overlay-upgrade')?.classList.remove('hidden');
-}
-
-function renderUpgradeChoices(choices) {
-  const container = document.getElementById('upgrade-cards-container');
-  if (!container) return;
-  container.innerHTML = '';
-  const ranks = (gameState.player && gameState.player.blessingRanks) || {};
-
-  choices.forEach((relic) => {
-    const curLv = ranks[relic.id] || 0;
-    const lvBadge = curLv === 0 ? 'NEW' : `LV.${curLv} → LV.${curLv + 1}`;
-    const card = document.createElement('button');
-    card.type = 'button';
-    card.className = `pixel-btn text-left p-4 border-2 ${relic.accent} flex flex-col justify-between gap-3 cursor-pointer`;
-    card.innerHTML = `
-      <div class="space-y-2">
-        <div class="flex items-center justify-between gap-2">
-          <span class="font-mono text-[10px] font-bold tracking-widest uppercase text-amber-400">${relic.tag}</span>
-          <span class="px-1.5 py-0.5 bg-[#090b10] border border-[#5c3b16] font-mono text-[9px] font-bold text-cyan-300">${lvBadge}</span>
-        </div>
-        <div class="font-display text-base font-bold text-white">${relic.name[currentLang]}</div>
-        <p class="text-xs text-slate-300 leading-relaxed">${relic.desc[currentLang]}</p>
-      </div>
-      <div class="font-mono text-[11px] font-bold uppercase tracking-wider text-amber-300 pt-2 border-t-2 border-[#3b2914]">
-        SELECT BLESSING &rsaquo;
-      </div>
-    `;
-    card.addEventListener('click', () => applyRelicUpgrade(relic.id));
-    container.appendChild(card);
-  });
-}
-
-function applyRelicUpgrade(relicId) {
-  const p = gameState.player;
-  if (!p) return;
-
-  p.blessingRanks = p.blessingRanks || {};
-  p.blessingRanks[relicId] = (p.blessingRanks[relicId] || 0) + 1;
-
-  const relicObj = RELIC_POOL.find((r) => r.id === relicId);
-  if (relicId === 'twin_cleave') {
-    p.cleaveArcDeg = Math.min(185, p.cleaveArcDeg + 38);
-    p.baseDamage = Math.round(p.baseDamage * 1.25);
-  } else if (relicId === 'phantom_blade') {
-    p.phantomWaveLevel = (p.phantomWaveLevel || 0) + 1;
-  } else if (relicId === 'executioner_edge') {
-    p.execBonus = (p.execBonus || 0) + 0.45;
-    p.critBonus = (p.critBonus || 0) + 0.10;
-  } else if (relicId === 'elemental_catalyst') {
-    p.reactionBonusMult = (p.reactionBonusMult || 1.0) + 0.45;
-  } else if (relicId === 'chain_nova') {
-    p.chainNovaBolts += 4;
-    p.baseDamage = Math.round(p.baseDamage * 1.12);
-  } else if (relicId === 'prismatic_shift') {
-    p.shiftBurstLevel = (p.shiftBurstLevel || 0) + 1;
-  } else if (relicId === 'vampiric_edge') {
-    p.vampiricHeal += 4;
-    p.blessingHpBonus = (p.blessingHpBonus || 0) + 25;
-    syncPlayerRelicMaxHp(35);
-  } else if (relicId === 'thorns_aegis') {
-    p.dmgReduction = Math.min(0.55, (p.dmgReduction || 0) + 0.15);
-    p.thornsLevel = (p.thornsLevel || 0) + 1;
-  } else if (relicId === 'second_wind') {
-    p.maxShield = (p.maxShield || 0) + 35;
-    p.shield = p.maxShield;
-  } else if (relicId === 'overclock_cd') {
-    p.cdScale = Math.max(0.42, p.cdScale * 0.78);
-    p.moveSpeed = Math.round(p.moveSpeed * 1.12);
-  } else if (relicId === 'phase_lightning') {
-    p.phaseLightningLevel = (p.phaseLightningLevel || 0) + 1;
-    p.maxDashCharges = Math.min(4, p.maxDashCharges + 1);
-    p.dashCharges = p.maxDashCharges;
-  } else if (relicId === 'void_piercer') {
-    p.lanceBonusDmg += 34;
-    p.lanceMaxCd = Math.max(1.1, p.lanceMaxCd * 0.85);
-  } else if (relicId === 'blood_frenzy') {
-    p.overdriveDrainMult = Math.max(0.25, (p.overdriveDrainMult || 1.0) * 0.6);
-    p.surgeDuration += 2.0;
-  } else if (relicId === 'solar_echo') {
-    p.cataclysmEchoLevel = (p.cataclysmEchoLevel || 0) + 1;
-    p.cataclysmMaxCd = Math.max(5.5, p.cataclysmMaxCd * 0.75);
-  } else if (relicId === 'orb_magnet') {
-    p.magnetMult = (p.magnetMult || 1.0) * 1.65;
-    p.extraSurgeMult = (p.extraSurgeMult || 1.0) + 0.35;
-    p.bonusShardDrop = (p.bonusShardDrop || 0) + 2;
-  }
-
-  if (relicObj) {
-    pushCombatLog(I18N[currentLang].logUpgrade(relicObj.name[currentLang]), 'cyan');
-  }
-  playCombatSfx('pickup', 1.15);
-
-  document.getElementById('overlay-upgrade')?.classList.add('hidden');
-  gameState.phase = 'playing';
-  openNextWaveTunnel();
-}
-
-function startNewRun() {
-  ensureAudio();
-  CONSTELLATION_NODES.forEach((n) => { n.unlocked = false; n.rank = 0; });
-  gameState.player = createInitialPlayer();
+function enterLobbyZone() {
+  gameState.zone = 'lobby';
+  gameState.portalOpen = false;
+  gameState.enemies.length = 0;
   gameState.boss = null;
+  gameState.enemyProjectiles.length = 0;
+  gameState.playerBolts.length = 0;
+  gameState.floorDecals.length = 0;
+  gameState.loots.length = 0;
+
+  if (gameState.player) {
+    gameState.player.x = LOBBY_SPAWN.x;
+    gameState.player.y = LOBBY_SPAWN.y;
+    gameState.player.vx = 0;
+    gameState.player.vy = 0;
+    gameState.player.hp = gameState.player.maxHp;
+    gameState.player.surgeGauge = 100;
+    if (gameState.player.scarf) {
+      gameState.player.scarf.forEach((pt, idx) => {
+        pt.x = LOBBY_SPAWN.x;
+        pt.y = LOBBY_SPAWN.y + idx * 5;
+      });
+    }
+    gameState.camera.x = LOBBY_SPAWN.x;
+    gameState.camera.y = LOBBY_SPAWN.y - 60;
+  }
+
+  spawnLobbyDummy();
+  playSfx('setMusicIntensity', 'ambient');
+  pushCombatLog('Welcome to Obsidian Sanctum Hall! Practice combos or enter the Crimson Rift.', '#fbbf24');
+}
+window.enterLobbyZone = enterLobbyZone;
+
+function enterDungeonFromLobby() {
+  if (gameState.zone !== 'lobby' || gameState.transitionTimer > 0) return;
+  gameState.transitionTargetZone = 'dungeon';
+  gameState.transitionTimer = 0.85;
+  gameState.transitionSwapped = false;
+  playSfx('playPortal');
+  pushCombatLog('Warping into the Obsidian Dungeon...', '#ff2a5f');
+}
+window.enterDungeonFromLobby = enterDungeonFromLobby;
+
+function handleLobbyInteractKey() {
+  if (gameState.phase !== 'playing' || gameState.zone !== 'lobby' || !gameState.player) return;
+  const p = gameState.player;
+
+  // Check proximity to Crimson Rift
+  if (Math.hypot(p.x - LOBBY_PORTAL.x, p.y - LOBBY_PORTAL.y) < LOBBY_PORTAL.r + 36) {
+    enterDungeonFromLobby();
+    return;
+  }
+
+  // Check proximity to Altar / Forge
+  for (let i = 0; i < LOBBY_STATIONS.length; i++) {
+    const st = LOBBY_STATIONS[i];
+    if (Math.hypot(p.x - st.x, p.y - st.y) < st.r + 52) {
+      if (typeof toggleArpgModal === 'function') {
+        toggleArpgModal(st.kind);
+      }
+      return;
+    }
+  }
+}
+
+window.addEventListener('keydown', (e) => {
+  if (e.code === 'KeyF') {
+    handleLobbyInteractKey();
+  }
+});
+
+function resetGameState() {
+  gameState.phase = 'playing';
+  gameState.worldTime = 0;
+  gameState.wave = 1;
   gameState.biomeIndex = 0;
+  gameState.lastBossForm = '';
+  gameState.score = 0;
+  gameState.combo = 0;
+  gameState.maxCombo = 0;
+  gameState.comboTimer = 0;
+  gameState.kills = 0;
+  gameState.bossesDefeated = 0;
+  gameState.reactionsTriggered = 0;
+  gameState.shrinesCollected = 0;
   gameState.portalOpen = false;
   gameState.transitionTimer = 0;
   gameState.transitionSwapped = false;
-  gameState.lastBossForm = null;
-  if (typeof buildIsometricPixelMap === 'function') buildIsometricPixelMap(0);
-
-  gameState.enemies = [];
-  gameState.enemyProjectiles = [];
-  gameState.playerBolts = [];
-  gameState.slashes = [];
-  gameState.bladeRibbons = [];
-  gameState.lightningArcs = [];
-  gameState.iceShards = [];
-  gameState.dissolvingCorpses = [];
-  gameState.brazierSmoke = [];
-  gameState.shockwaves = [];
-  gameState.astralRings = [];
-  gameState.overdriveSigils = [];
-  gameState.vortexCores = [];
-  gameState.slashCrescents = [];
-  gameState.afterimages = [];
-  gameState.sparks = [];
-  gameState.floorDecals = [];
-  gameState.loots = [];
-  gameState.floatingTexts = [];
-  gameState.score = 0;
-  gameState.kills = 0;
-  gameState.combo = 0;
-  gameState.comboTimer = 0;
   gameState.hitstopTimer = 0;
+  gameState.chromaticTimer = 0;
   gameState.shakeMag = 0;
-  gameState.camera.x = gameState.player.x;
-  gameState.camera.y = gameState.player.y;
-  gameState.combatLog = [];
-
-  document.getElementById('overlay-start')?.classList.add('hidden');
-  document.getElementById('overlay-pause')?.classList.add('hidden');
-  document.getElementById('overlay-gameover')?.classList.add('hidden');
-  document.getElementById('overlay-upgrade')?.classList.add('hidden');
-
-  gameState.phase = 'playing';
-  pushCombatLog(I18N[currentLang].logDeploy, 'amber');
-  startWave(1);
-}
-
-function togglePause() {
-  if (gameState.phase === 'playing') {
-    gameState.phase = 'paused';
-    document.getElementById('overlay-pause')?.classList.remove('hidden');
-  } else if (gameState.phase === 'paused') {
-    gameState.phase = 'playing';
-    document.getElementById('overlay-pause')?.classList.add('hidden');
+  gameState.ventCycleTimer = 0;
+  gameState.pendingUpgrades = [];
+  gameState.mouseDown = false;
+  if (gameState.keys && typeof gameState.keys.clear === 'function') {
+    gameState.keys.clear();
   }
+
+  // รีเซ็ตระดับโหนดกลุ่มดาวเมื่อเริ่มรอบใหม่
+  if (typeof CONSTELLATION_NODES !== 'undefined' && Array.isArray(CONSTELLATION_NODES)) {
+    CONSTELLATION_NODES.forEach((n) => { n.rank = 0; n.unlocked = false; });
+  }
+
+  gameState.enemies.length = 0;
+  gameState.boss = null;
+  gameState.floorDecals.length = 0;
+  gameState.loots.length = 0;
+  gameState.dissolvingCorpses.length = 0;
+  gameState.afterimages.length = 0;
+  gameState.slashCrescents.length = 0;
+  gameState.slashes.length = 0;
+  gameState.overdriveSigils.length = 0;
+  gameState.astralRings.length = 0;
+  gameState.shockwaves.length = 0;
+  gameState.lightningArcs.length = 0;
+  gameState.playerBolts.length = 0;
+  gameState.enemyProjectiles.length = 0;
+  gameState.iceShards.length = 0;
+  gameState.sparks.length = 0;
+  gameState.brazierSmoke.length = 0;
+  gameState.floatingTexts.length = 0;
+
+  if (typeof buildBiomeMapLayout === 'function') buildBiomeMapLayout(0);
+  if (typeof buildProceduralFloorPattern === 'function') buildProceduralFloorPattern();
+
+  gameState.transitionTargetZone = null;
+  gameState.player = createInitialPlayer();
+  initAmbientEmbers();
+  enterLobbyZone();
 }
-
-function triggerGameOver() {
-  gameState.phase = 'gameover';
-  const isNewRec = saveHighScore(gameState.score, gameState.wave);
-
-  const endScore = document.getElementById('end-score');
-  const endWave = document.getElementById('end-wave');
-  const endKills = document.getElementById('end-kills');
-  const recBanner = document.getElementById('end-new-record');
-
-  if (endScore) endScore.textContent = gameState.score.toLocaleString();
-  if (endWave) endWave.textContent = String(gameState.wave);
-  if (endKills) endKills.textContent = String(gameState.kills);
-  if (recBanner) recBanner.classList.toggle('hidden', !isNewRec);
-
-  document.getElementById('overlay-gameover')?.classList.remove('hidden');
-}
+window.resetGameState = resetGameState;
+window.resetGame = resetGameState;
 
 // -------------------------------------------------------------------------
-// 8. SIMULATION UPDATE STEP
+// 8H. ENEMY & 4-FORM BOSS AI SUB-UPDATERS
 // -------------------------------------------------------------------------
-function updateSimulation(dt) {
-  gameState.worldTime += dt;
-
-  for (let i = 0; i < gameState.ambientEmbers.length; i++) {
-    const emb = gameState.ambientEmbers[i];
-    emb.x += (emb.vx + Math.sin(gameState.worldTime * 1.4 + emb.phase) * 14) * dt;
-    emb.y += emb.vy * dt;
-    if (emb.y < 16) {
-      emb.y = ARENA_H - 20;
-      emb.x = Math.random() * ARENA_W;
+function updateEnemiesAI(dt, p) {
+  for (let i = gameState.enemies.length - 1; i >= 0; i--) {
+    const en = gameState.enemies[i];
+    if (en.hp <= 0) {
+      gameState.enemies.splice(i, 1);
+      continue;
     }
-    if (emb.x < 16) emb.x = ARENA_W - 16;
-    if (emb.x > ARENA_W - 16) emb.x = 16;
+
+    en.hitFlash = Math.max(0, en.hitFlash - dt);
+    en.squash = Math.max(0, en.squash - dt * 4);
+    en.burnTimer = Math.max(0, (en.burnTimer || 0) - dt);
+    en.slowTimer = Math.max(0, (en.slowTimer || 0) - dt);
+    en.shockTimer = Math.max(0, (en.shockTimer || 0) - dt);
+    en.vulnTimer = Math.max(0, (en.vulnTimer || 0) - dt);
+    en.stunTimer = Math.max(0, (en.stunTimer || 0) - dt);
+
+    if (en.burnTimer > 0) {
+      en.dotTick = (en.dotTick || 0) + dt;
+      if (en.dotTick >= 0.55) {
+        en.dotTick = 0;
+        const burnDmg = Math.max(4, Math.round(6.5 * getPlayerDamageMult()));
+        en.hp -= burnDmg;
+        spawnFloatingText(en.x, en.y - 12, `${burnDmg}`, '#ff6a00', 0.8);
+        if (en.hp <= 0) {
+          handleEnemyDeath(en, false);
+          gameState.enemies.splice(i, 1);
+          continue;
+        }
+      }
+    }
+
+    if (en.isDummy) {
+      en.vx *= Math.max(0, 1 - dt * 12);
+      en.vy *= Math.max(0, 1 - dt * 12);
+      // ดึงหุ่นซ้อมกลับจุดเดิมเบาๆ ไม่ให้กระเด็นหายไปนอกลาน
+      en.x += (LOBBY_DUMMY_POS.x - en.x) * Math.min(1, dt * 4.5);
+      en.y += (LOBBY_DUMMY_POS.y - en.y) * Math.min(1, dt * 4.5);
+      if (en.hp < en.maxHp * 0.5) en.hp = en.maxHp;
+      continue;
+    }
+
+    const dx = p.x - en.x;
+    const dy = p.y - en.y;
+    const distToP = Math.hypot(dx, dy) || 1;
+    const moveSpd = en.speed * (en.slowTimer > 0 ? 0.56 : 1);
+
+    if (en.stunTimer > 0) {
+      en.vx *= Math.max(0, 1 - dt * 9);
+      en.vy *= Math.max(0, 1 - dt * 9);
+    } else if (en.type === 'weaver') {
+      const hasLOS = hasLineOfSight(en.x, en.y, p.x, p.y);
+      const desiredDist = 330;
+      let tx = 0;
+      let ty = 0;
+
+      if (!hasLOS) {
+        const perpX = (-dy / distToP) * en.strafeDir;
+        const perpY = (dx / distToP) * en.strafeDir;
+        tx = (dx / distToP * 0.45 + perpX * 0.85) * moveSpd;
+        ty = (dy / distToP * 0.45 + perpY * 0.85) * moveSpd;
+      } else {
+        const moveFactor = distToP > desiredDist + 45 ? 1 : distToP < desiredDist - 70 ? -0.8 : 0.15;
+        const strafe = 0.35 * en.strafeDir;
+        tx = ((dx / distToP) * moveFactor + (-dy / distToP) * strafe) * moveSpd;
+        ty = ((dy / distToP) * moveFactor + (dx / distToP) * strafe) * moveSpd;
+      }
+
+      en.vx += (tx - en.vx) * Math.min(1, dt * 6);
+      en.vy += (ty - en.vy) * Math.min(1, dt * 6);
+
+      en.attackCd -= dt;
+      if (en.attackCd <= 0 && distToP < 680 && hasLOS) {
+        en.attackCd = randRange(1.85, 2.55);
+        const a = Math.atan2(dy, dx);
+        const pCol = en.element === 'fire' ? '#fb923c' : en.element === 'ice' ? '#38bdf8' : '#e879f9';
+        gameState.enemyProjectiles.push({
+          x: en.x,
+          y: en.y,
+          vx: Math.cos(a) * 335,
+          vy: Math.sin(a) * 335,
+          r: 8,
+          dmg: en.dmg,
+          color: pCol,
+          life: 2.6,
+        });
+      }
+    } else if (en.type === 'juggernaut') {
+      if (en.chargeTimer > 0) {
+        en.chargeTimer -= dt;
+        const cSpd = moveSpd * 3.1;
+        en.vx = en.chargeDirX * cSpd;
+        en.vy = en.chargeDirY * cSpd;
+        if (Math.random() < 0.35) spawnSparks(en.x, en.y, 2, '#f97316', 30, 80, 2);
+      } else {
+        en.vx += ((dx / distToP) * moveSpd - en.vx) * Math.min(1, dt * 5);
+        en.vy += ((dy / distToP) * moveSpd - en.vy) * Math.min(1, dt * 5);
+        en.abilityCd -= dt;
+        if (en.abilityCd <= 0 && distToP < 380 && distToP > 110 && hasLineOfSight(en.x, en.y, p.x, p.y)) {
+          en.abilityCd = randRange(3.6, 4.8);
+          en.chargeTimer = 0.72;
+          en.chargeDirX = dx / distToP;
+          en.chargeDirY = dy / distToP;
+          spawnFloatingText(en.x, en.y - 26, 'CHARGE!', '#fb923c', 1.0);
+        }
+      }
+    } else if (en.type === 'stalker') {
+      en.vx += ((dx / distToP) * moveSpd - en.vx) * Math.min(1, dt * 7);
+      en.vy += ((dy / distToP) * moveSpd - en.vy) * Math.min(1, dt * 7);
+      en.abilityCd -= dt;
+      if (en.abilityCd <= 0 && distToP < 360 && distToP > 130) {
+        en.abilityCd = randRange(3.4, 4.6);
+        spawnSparks(en.x, en.y, 10, '#c084fc', 60, 170, 2.5);
+        const blinkAngle = Math.atan2(dy, dx) + (Math.random() < 0.5 ? 0.65 : -0.65);
+        en.x = clamp(en.x + Math.cos(blinkAngle) * 145, 70, ARENA_W - 70);
+        en.y = clamp(en.y + Math.sin(blinkAngle) * 145, 90, ARENA_H - 70);
+        resolveEntityArenaAndPillars(en, 64);
+        spawnSparks(en.x, en.y, 12, '#e879f9', 80, 200, 2.5);
+      }
+    } else {
+      en.vx += ((dx / distToP) * moveSpd - en.vx) * Math.min(1, dt * 6);
+      en.vy += ((dy / distToP) * moveSpd - en.vy) * Math.min(1, dt * 6);
+    }
+
+    for (let j = i - 1; j >= 0; j--) {
+      const other = gameState.enemies[j];
+      const ox = en.x - other.x;
+      const oy = en.y - other.y;
+      const od = Math.hypot(ox, oy);
+      const minSep = en.r + other.r + 4;
+      if (od > 0.01 && od < minSep) {
+        const push = (minSep - od) * 0.5;
+        en.x += (ox / od) * push;
+        en.y += (oy / od) * push;
+        other.x -= (ox / od) * push;
+        other.y -= (oy / od) * push;
+      }
+    }
+
+    en.x += en.vx * dt;
+    en.y += en.vy * dt;
+    const hitPillar = resolveEntityArenaAndPillars(en, 64);
+
+    if (hitPillar && en.type === 'juggernaut' && en.chargeTimer > 0) {
+      en.chargeTimer = 0;
+      en.stunTimer = 1.6;
+      en.vulnTimer = Math.max(en.vulnTimer || 0, 4.0);
+      en.vx = 0;
+      en.vy = 0;
+      spawnShockwave(en.x, en.y, 110, '#fbbf24', 4.5);
+      spawnFloatingText(en.x, en.y - 30, 'CRASH STUNNED!', '#fde047', 1.25);
+      addCameraShake(9, 0, 1);
+      playSfx('playHit', true);
+    }
+
+    if (Math.hypot(p.x - en.x, p.y - en.y) < p.r + en.r) {
+      damagePlayer(en.chargeTimer > 0 ? en.dmg * 1.35 : en.dmg, en.x, en.y);
+      if (en.chargeTimer > 0) en.chargeTimer = 0;
+    }
+  }
+}
+
+function updateBossAI(dt, p) {
+  const b = gameState.boss;
+  if (!b || b.hp <= 0) return;
+
+  b.hitFlash = Math.max(0, b.hitFlash - dt);
+  b.squash = Math.max(0, b.squash - dt * 4);
+  b.burnTimer = Math.max(0, (b.burnTimer || 0) - dt);
+  b.slowTimer = Math.max(0, (b.slowTimer || 0) - dt);
+  b.shockTimer = Math.max(0, (b.shockTimer || 0) - dt);
+  b.vulnTimer = Math.max(0, (b.vulnTimer || 0) - dt);
+  b.stunTimer = Math.max(0, (b.stunTimer || 0) - dt);
+
+  if (b.burnTimer > 0) {
+    b.dotTick = (b.dotTick || 0) + dt;
+    if (b.dotTick >= 0.6) {
+      b.dotTick = 0;
+      const burnDmg = Math.max(5, Math.round(7 * getPlayerDamageMult()));
+      b.hp -= burnDmg;
+      spawnFloatingText(b.x, b.y - 20, `${burnDmg}`, '#ff6a00', 0.85);
+      if (b.hp <= 0) {
+        handleEnemyDeath(b, true);
+        return;
+      }
+    }
   }
 
-  if (gameState.phase !== 'playing') return;
+  const dx = p.x - b.x;
+  const dy = p.y - b.y;
+  const distToP = Math.hypot(dx, dy) || 1;
+  const bSpd = b.speed * (b.slowTimer > 0 ? 0.72 : 1);
 
-  const p = gameState.player;
-  if (!p) return;
+  if (b.stunTimer > 0) {
+    b.vx *= Math.max(0, 1 - dt * 8);
+    b.vy *= Math.max(0, 1 - dt * 8);
+  } else if (b.chargeTimer > 0) {
+    b.chargeTimer -= dt;
+    b.vx = b.chargeDirX * bSpd * 3.0;
+    b.vy = b.chargeDirY * bSpd * 3.0;
+    if (Math.random() < 0.45) spawnSparks(b.x, b.y, 3, '#ff2a5f', 40, 120, 2.5);
+  } else if (b.telegraph) {
+    b.telegraph.timer -= dt;
+    b.vx *= Math.max(0, 1 - dt * 10);
+    b.vy *= Math.max(0, 1 - dt * 10);
+
+    if (b.telegraph.timer <= 0) {
+      const tel = b.telegraph;
+      b.telegraph = null;
+
+      if (tel.kind === 'slam') {
+        spawnShockwave(tel.x, tel.y, tel.r, '#ff2a5f', 7.5);
+        spawnFloorDecal(tel.x, tel.y, tel.r * 0.45, 'scorch', 10);
+        addCameraShake(14, 0, 1);
+        if (Math.hypot(p.x - tel.x, p.y - tel.y) <= tel.r) {
+          damagePlayer(tel.dmg, tel.x, tel.y);
+        }
+      } else if (tel.kind === 'beam') {
+        const fan = b.phase === 2 ? 2 : 1;
+        for (let k = -fan; k <= fan; k++) {
+          const ang = tel.angle + k * 0.13;
+          gameState.enemyProjectiles.push({
+            x: b.x,
+            y: b.y,
+            vx: Math.cos(ang) * 480,
+            vy: Math.sin(ang) * 480,
+            r: 10,
+            dmg: tel.dmg,
+            color: '#ff2a5f',
+            life: 2.3,
+          });
+        }
+        addCameraShake(10, Math.cos(tel.angle), Math.sin(tel.angle));
+      } else if (tel.kind === 'ring') {
+        const orbs = b.phase === 2 ? 12 : 8;
+        for (let k = 0; k < orbs; k++) {
+          const ang = (k / orbs) * Math.PI * 2 + gameState.worldTime;
+          gameState.enemyProjectiles.push({
+            x: b.x,
+            y: b.y,
+            vx: Math.cos(ang) * 320,
+            vy: Math.sin(ang) * 320,
+            r: 9,
+            dmg: tel.dmg * 0.85,
+            color: '#e879f9',
+            life: 2.8,
+          });
+        }
+        spawnShockwave(b.x, b.y, 180, '#e879f9', 6);
+      } else if (tel.kind === 'charge') {
+        b.chargeTimer = 0.78;
+        b.chargeDirX = Math.cos(tel.angle);
+        b.chargeDirY = Math.sin(tel.angle);
+        spawnFloatingText(b.x, b.y - 40, 'RUSH!', '#ff2a5f', 1.2);
+      }
+    }
+  } else {
+    b.vx += ((dx / distToP) * bSpd - b.vx) * Math.min(1, dt * 5);
+    b.vy += ((dy / distToP) * bSpd - b.vy) * Math.min(1, dt * 5);
+    b.skillCd -= dt;
+
+    if (b.skillCd <= 0) {
+      b.skillCd = b.phase === 2 ? 1.95 : 2.9;
+      b.patternIdx = (b.patternIdx + 1) % 3;
+      const aimToP = Math.atan2(dy, dx);
+
+      if (b.visualForm === 'boss_lich' && b.patternIdx === 1) {
+        b.telegraph = { kind: 'ring', x: b.x, y: b.y, r: 140, angle: 0, timer: 0.65, maxTimer: 0.65, dmg: b.dmg };
+        if (b.phase === 2 && gameState.enemies.length < 6) {
+          spawnEnemyOfType('husk', gameState.wave);
+          spawnEnemyOfType('stalker', gameState.wave);
+        }
+      } else if ((b.visualForm === 'boss_wyrm' || b.visualForm === 'boss_golem') && b.patternIdx === 2 && distToP > 190) {
+        b.telegraph = { kind: 'charge', x: b.x, y: b.y, r: 420, angle: aimToP, timer: 0.68, maxTimer: 0.68, dmg: b.dmg * 1.25 };
+      } else if (distToP < 250 || b.patternIdx === 0) {
+        b.telegraph = { kind: 'slam', x: p.x, y: p.y, r: b.phase === 2 ? 175 : 155, angle: 0, timer: 0.74, maxTimer: 0.74, dmg: b.dmg * 1.35 };
+      } else {
+        b.telegraph = { kind: 'beam', x: b.x, y: b.y, r: 460, angle: aimToP, timer: 0.62, maxTimer: 0.62, dmg: b.dmg };
+      }
+    }
+  }
+
+  b.x += b.vx * dt;
+  b.y += b.vy * dt;
+  const hitPillar = resolveEntityArenaAndPillars(b, 72);
+
+  if (hitPillar && b.chargeTimer > 0) {
+    b.chargeTimer = 0;
+    b.stunTimer = 1.4;
+    b.vulnTimer = Math.max(b.vulnTimer || 0, 3.8);
+    b.vx = 0;
+    b.vy = 0;
+    spawnShockwave(b.x, b.y, 160, '#fbbf24', 6);
+    spawnFloatingText(b.x, b.y - 44, 'BOSS STAGGERED!', '#fde047', 1.38);
+    addCameraShake(14, 0, 1);
+    playSfx('playHit', true);
+  }
+
+  if (Math.hypot(p.x - b.x, p.y - b.y) < p.r + b.r) {
+    damagePlayer(b.chargeTimer > 0 ? b.dmg * 1.3 : b.dmg, b.x, b.y);
+    if (b.chargeTimer > 0) b.chargeTimer = 0;
+  }
+}
+
+// -------------------------------------------------------------------------
+// 8I. MAIN SIMULATION UPDATE LOOP
+// -------------------------------------------------------------------------
+function updateSimulation(rawDt) {
+  const dt = Math.min(0.05, rawDt);
+  if (gameState.phase !== 'playing' || !gameState.player) return;
+
+  gameState.worldTime += dt;
 
   if (gameState.transitionTimer > 0) {
     gameState.transitionTimer = Math.max(0, gameState.transitionTimer - dt);
-    if (!gameState.transitionSwapped && gameState.transitionTimer <= 0.42) {
+    if (!gameState.transitionSwapped && gameState.transitionTimer <= 0.425) {
       gameState.transitionSwapped = true;
-      gameState.biomeIndex = (gameState.biomeIndex + 1) % ROOM_BIOMES.length;
-      if (typeof buildIsometricPixelMap === 'function') {
-        buildIsometricPixelMap(gameState.biomeIndex);
+      gameState.floorDecals.length = 0;
+      gameState.loots.length = 0;
+
+      if (gameState.transitionTargetZone === 'dungeon') {
+        gameState.transitionTargetZone = null;
+        gameState.zone = 'dungeon';
+        gameState.biomeIndex = 0;
+        gameState.score = 0;
+        gameState.combo = 0;
+        gameState.kills = 0;
+        if (typeof buildBiomeMapLayout === 'function') buildBiomeMapLayout(0);
+        if (typeof buildProceduralFloorPattern === 'function') buildProceduralFloorPattern();
+        gameState.player.x = ARENA_W * 0.5;
+        gameState.player.y = ARENA_H * 0.5 + 180;
+        gameState.player.hp = gameState.player.maxHp;
+        gameState.player.surgeGauge = 0;
+        gameState.player.surgeTimer = 0;
+        gameState.camera.x = gameState.player.x;
+        gameState.camera.y = gameState.player.y;
+        initAmbientEmbers();
+        startWave(1);
+      } else {
+        gameState.biomeIndex = (gameState.biomeIndex + 1) % (typeof ROOM_BIOMES !== 'undefined' ? ROOM_BIOMES.length : 4);
+        if (typeof buildBiomeMapLayout === 'function') buildBiomeMapLayout(gameState.biomeIndex);
+        if (typeof buildProceduralFloorPattern === 'function') buildProceduralFloorPattern();
+        gameState.player.x = ARENA_W * 0.5;
+        gameState.player.y = ARENA_H * 0.5 + 180;
+        gameState.camera.x = gameState.player.x;
+        gameState.camera.y = gameState.player.y;
+        initAmbientEmbers();
+        startWave(gameState.wave + 1);
       }
-      gameState.enemyProjectiles = [];
-      gameState.playerBolts = [];
-      gameState.floorDecals = [];
-      gameState.loots = [];
-      gameState.slashes = [];
-      gameState.shockwaves = [];
-      p.x = ARENA_W * 0.5;
-      p.y = ARENA_H - 190;
-      p.vx = 0;
-      p.vy = 0;
-      gameState.camera.x = p.x;
-      gameState.camera.y = p.y;
-      startWave(gameState.wave + 1);
     }
     return;
   }
@@ -1664,585 +2034,687 @@ function updateSimulation(dt) {
     return;
   }
 
-  p.cleaveCd = Math.max(0, p.cleaveCd - dt);
+  if (gameState.shakeMag > 0) gameState.shakeMag = Math.max(0, gameState.shakeMag - dt * 36);
+  if (gameState.chromaticTimer > 0) gameState.chromaticTimer = Math.max(0, gameState.chromaticTimer - dt);
+  if (gameState.comboTimer > 0) {
+    gameState.comboTimer -= dt;
+    if (gameState.comboTimer <= 0) gameState.combo = 0;
+  }
+
+  const p = gameState.player;
+
+  // 1. คูลดาวน์และบัฟผู้เล่น
+  p.attackCd = Math.max(0, p.attackCd - dt);
+  p.invulnTimer = Math.max(0, p.invulnTimer - dt);
   p.lanceCd = Math.max(0, p.lanceCd - dt);
   p.novaCd = Math.max(0, p.novaCd - dt);
   p.cataclysmCd = Math.max(0, p.cataclysmCd - dt);
+  p.surgeCd = Math.max(0, (p.surgeCd || 0) - dt);
   p.shiftHealCd = Math.max(0, (p.shiftHealCd || 0) - dt);
-  if ((p.surgeCd || 0) > 0) {
-    p.surgeCd = Math.max(0, p.surgeCd - dt);
-  }
-  if ((p.surgeTimer || 0) > 0) {
-    p.surgeTimer = Math.max(0, p.surgeTimer - dt);
-    const minFloorHp = Math.max(1, Math.ceil(p.maxHp * 0.1));
-    const drainRate = p.maxHp * 0.085 * (p.overdriveDrainMult || 1.0);
-    if (p.hp > minFloorHp) {
-      p.hp = Math.max(minFloorHp, p.hp - drainRate * dt);
-    }
-    if (p.surgeTimer === 0) {
-      p.surgeCd = (p.surgeMaxCd || 9.0) * getEffectiveCooldownScale();
-      addFloatingText(p.x, p.y - 28, 'OVERDRIVE CD', '#fb7185', 0.95);
-    }
-  }
-  p.invulnTimer = Math.max(0, p.invulnTimer - dt);
   p.transformAnimTimer = Math.max(0, (p.transformAnimTimer || 0) - dt);
-  if (p.weaponAspect === 'cryo' && Math.hypot(p.vx, p.vy) > 45) {
-    p.frostTrailTimer = (p.frostTrailTimer || 0) - dt;
-    if (p.frostTrailTimer <= 0) {
-      p.frostTrailTimer = 0.24;
-      addFloorDecal(p.x, p.y + p.r * 0.45, 22, 'frost');
-    }
-  }
-  p.swordSwingOffset *= Math.pow(0.02, dt);
-  gameState.chromaticTimer = Math.max(0, gameState.chromaticTimer - dt);
+  p.shrineFuryTimer = Math.max(0, (p.shrineFuryTimer || 0) - dt);
+  p.voltHasteTimer = Math.max(0, (p.voltHasteTimer || 0) - dt);
+  p.swordSwingOffset *= Math.pow(0.001, dt);
 
-  if (Math.random() < 0.45) {
-    const pil = PILLARS[Math.floor(Math.random() * PILLARS.length)];
-    gameState.brazierSmoke.push({
-      x: pil.x + (Math.random() - 0.5) * 14,
-      y: pil.y - 6,
-      vx: -8 + Math.random() * 16,
-      vy: -28 - Math.random() * 24,
-      r: 6 + Math.random() * 8,
-      life: 1.1 + Math.random() * 0.6,
-      maxLife: 1.7,
-    });
+  if (p.comboResetTimer > 0) {
+    p.comboResetTimer -= dt;
+    if (p.comboResetTimer <= 0) p.comboStep = 0;
+  }
+
+  if (p.surgeTimer > 0) {
+    p.surgeTimer = Math.max(0, p.surgeTimer - dt);
   }
 
   if (p.dashCharges < p.maxDashCharges) {
-    p.dashRechargeTimer += dt;
-    if (p.dashRechargeTimer >= p.dashRechargeTime * getEffectiveCooldownScale()) {
-      p.dashRechargeTimer = 0;
+    p.dashRegenTimer += dt;
+    if (p.dashRegenTimer >= p.dashRegenDuration * getEffectiveCooldownScale()) {
+      p.dashRegenTimer = 0;
       p.dashCharges++;
     }
   }
 
-  if (gameState.combo > 0) {
-    gameState.comboTimer -= dt;
-    if (gameState.comboTimer <= 0) {
-      gameState.combo = 0;
-    }
-  }
-
-  if (p.dashTimer > 0) {
-    p.dashTimer = Math.max(0, p.dashTimer - dt);
-    if (p.dashTimer === 0 && p.invulnTimer <= 0.05) {
-      p.phasePayoffArmed = false;
-    }
-    p.afterimageTimer -= dt;
-    if (p.afterimageTimer <= 0) {
-      p.afterimageTimer = 0.028;
-      gameState.afterimages.push({
-        x: p.x,
-        y: p.y,
-        r: p.r,
-        alpha: 0.55,
-        color: p.surgeTimer > 0 ? '#ffb800' : '#22d3ee',
-      });
-    }
-    p.x += p.vx * dt;
-    p.y += p.vy * dt;
-  } else {
-    let mx = 0;
-    let my = 0;
-    if (gameState.keys.has('KeyW') || gameState.keys.has('ArrowUp')) my -= 1;
-    if (gameState.keys.has('KeyS') || gameState.keys.has('ArrowDown')) my += 1;
-    if (gameState.keys.has('KeyA') || gameState.keys.has('ArrowLeft')) mx -= 1;
-    if (gameState.keys.has('KeyD') || gameState.keys.has('ArrowRight')) mx += 1;
-
-    const worldMx = mx + my;
-    const worldMy = my - mx;
-    const len = Math.hypot(worldMx, worldMy);
-    const dirX = len > 0 ? worldMx / len : 0;
-    const dirY = len > 0 ? worldMy / len : 0;
-
-    const aspMoveMult = p.weaponAspect === 'volt' ? 1.16 : p.weaponAspect === 'solar' ? 0.96 : 1.0;
-    const spd = p.moveSpeed * aspMoveMult * (p.surgeTimer > 0 ? 1.42 : 1.0);
-    p.vx = p.vx * 0.78 + dirX * spd * 0.22;
-    p.vy = p.vy * 0.78 + dirY * spd * 0.22;
-    p.x += p.vx * dt;
-    p.y += p.vy * dt;
-
-    if (p.weaponAspect === 'volt' && Math.hypot(p.vx, p.vy) > 180) {
-      p.voltTrailTimer = (p.voltTrailTimer || 0) - dt;
-      if (p.voltTrailTimer <= 0) {
-        p.voltTrailTimer = 0.085;
-        gameState.afterimages.push({ x: p.x, y: p.y, r: p.r, alpha: 0.42, color: '#c084fc' });
-      }
-    }
-  }
-
-  resolveWorldCollisions(p);
-
-  if (p.scarf && p.scarf.length > 0) {
-    const backX = p.x - Math.cos(p.aimAngle) * 10;
-    const backY = p.y - Math.sin(p.aimAngle) * 10 + 4;
-    p.scarf[0].x = backX;
-    p.scarf[0].y = backY;
-    const segLen = 6.5;
-    for (let s = 1; s < p.scarf.length; s++) {
-      const prev = p.scarf[s - 1];
-      const curr = p.scarf[s];
-      curr.x += Math.sin(gameState.worldTime * 7 + s * 0.8) * 18 * dt;
-      curr.y += (8 + Math.cos(gameState.worldTime * 5 + s) * 12) * dt;
-      const dx = curr.x - prev.x;
-      const dy = curr.y - prev.y;
-      const dist = Math.hypot(dx, dy) || 0.001;
-      if (dist > segLen) {
-        curr.x = prev.x + (dx / dist) * segLen;
-        curr.y = prev.y + (dy / dist) * segLen;
-      }
-    }
-  }
-
-  const viewW = canvas.clientWidth || window.innerWidth;
-  const viewH = canvas.clientHeight || window.innerHeight;
-  if (typeof isoScreenToWorld === 'function') {
+  if (typeof isoScreenToWorld === 'function' && typeof canvas !== 'undefined') {
+    const viewW = canvas.clientWidth || window.innerWidth;
+    const viewH = canvas.clientHeight || window.innerHeight;
     const mw = isoScreenToWorld(gameState.mouseScreen.x, gameState.mouseScreen.y, viewW, viewH);
     gameState.mouseWorld.x = mw.x;
     gameState.mouseWorld.y = mw.y;
+    p.aimAngle = Math.atan2(mw.y - p.y, mw.x - p.x);
+  }
+
+  // 2. การเคลื่อนที่ Isometric + Phase Dash
+  if (p.dashTimer > 0) {
+    p.dashTimer = Math.max(0, p.dashTimer - dt);
+    const dashSpeed = 840;
+    p.vx = p.dashDirX * dashSpeed;
+    p.vy = p.dashDirY * dashSpeed;
+    gameState.afterimages.push({ x: p.x, y: p.y, alpha: 0.72 });
   } else {
-    gameState.mouseWorld.x = gameState.mouseScreen.x + (gameState.camera.x - viewW * 0.5);
-    gameState.mouseWorld.y = gameState.mouseScreen.y + (gameState.camera.y - viewH * 0.5);
+    let ix = 0;
+    let iy = 0;
+    if (isKeyPressed('KeyW', 'w', 'W', 'ArrowUp', 'arrowup')) { ix -= 1; iy -= 1; }
+    if (isKeyPressed('KeyS', 's', 'S', 'ArrowDown', 'arrowdown')) { ix += 1; iy += 1; }
+    if (isKeyPressed('KeyA', 'a', 'A', 'ArrowLeft', 'arrowleft')) { ix -= 1; iy += 1; }
+    if (isKeyPressed('KeyD', 'd', 'D', 'ArrowRight', 'arrowright')) { ix += 1; iy -= 1; }
+
+    const len = Math.hypot(ix, iy);
+    const spd = getPlayerMoveSpeed();
+    if (len > 0.01) {
+      const tx = (ix / len) * spd;
+      const ty = (iy / len) * spd;
+      p.vx += (tx - p.vx) * Math.min(1, dt * 14);
+      p.vy += (ty - p.vy) * Math.min(1, dt * 14);
+      if (p.weaponAspect === 'volt' && Math.random() < 0.25) {
+        gameState.afterimages.push({ x: p.x, y: p.y, alpha: 0.42 });
+      }
+    } else {
+      const drag = p.inIcePool ? 4.2 : 13;
+      p.vx *= Math.max(0, 1 - dt * drag);
+      p.vy *= Math.max(0, 1 - dt * drag);
+    }
   }
-  p.aimAngle = Math.atan2(gameState.mouseWorld.y - p.y, gameState.mouseWorld.x - p.x);
 
-  const camLerp = 1 - Math.exp(-8.5 * dt);
-  gameState.camera.x += (p.x - gameState.camera.x) * camLerp;
-  gameState.camera.y += (p.y - gameState.camera.y) * camLerp;
-  gameState.shakeMag = Math.max(0, gameState.shakeMag - dt * 28);
+  p.x += p.vx * dt;
+  p.y += p.vy * dt;
+  resolveEntityArenaAndPillars(p, 64);
 
-  if (gameState.portalOpen) {
-    if (Math.hypot(p.x - TUNNEL_GATE.x, p.y - TUNNEL_GATE.y) <= TUNNEL_GATE.r) {
+  if (p.scarf && p.scarf.length > 0) {
+    p.scarf[0].x = p.x;
+    p.scarf[0].y = p.y;
+    for (let s = 1; s < p.scarf.length; s++) {
+      const prev = p.scarf[s - 1];
+      const cur = p.scarf[s];
+      cur.x += (prev.x - cur.x) * Math.min(1, dt * 16);
+      cur.y += (prev.y - cur.y) * Math.min(1, dt * 16);
+    }
+  }
+
+  if (gameState.mouseDown) {
+    performPrimaryAttack();
+  }
+
+  // 3. ระบบสภาพแวดล้อม (แยกโหมด Lobby กับ Dungeon)
+  if (gameState.zone === 'lobby') {
+    // ในล็อบบี้: รีเจน HP & เกจ Overdrive ไวขึ้นเพื่อซ้อมคอมโบและสกิลได้เต็มที่
+    p.hp = Math.min(p.maxHp, p.hp + dt * 25);
+    if (p.surgeTimer <= 0 && (p.surgeCd || 0) <= 0) {
+      p.surgeGauge = Math.min(100, p.surgeGauge + dt * 18);
+    }
+    // เดินเข้าประตูรอยแยกสีแดง (Crimson Rift) ด้านบน -> วาร์ปเข้าดันเจี้ยนเวฟ 1
+    if (Math.hypot(p.x - LOBBY_PORTAL.x, p.y - LOBBY_PORTAL.y) < LOBBY_PORTAL.r + 12) {
+      enterDungeonFromLobby();
+      return;
+    }
+  } else {
+    updateThermalVents(dt);
+    updateMapShrinesAndPools(dt);
+
+    // 4. เข้าประตูอุโมงค์หลังเคลียร์เวฟ
+    if (gameState.portalOpen && Math.hypot(p.x - TUNNEL_GATE.x, p.y - TUNNEL_GATE.y) < TUNNEL_GATE.r + 22) {
       enterNextWaveTunnel();
+      return;
     }
-  } else if (gameState.waveSpawnQueue.length > 0) {
-    gameState.waveSpawnTimer -= dt;
-    if (gameState.waveSpawnTimer <= 0 && gameState.enemies.length < 18) {
-      const nextSpec = gameState.waveSpawnQueue.shift();
-      spawnEnemyOfType(nextSpec);
-      gameState.waveSpawnTimer = Math.max(0.32, 0.92 - gameState.wave * 0.05);
-    }
-  } else if (gameState.enemies.length === 0 && !gameState.boss) {
-    openWaveUpgradeDraft();
-    return;
   }
 
-  // Update Player Bolts (รองรับคลื่นดาบทะลวง pierce จากพร Phantom Echo)
+  // กล้องติดตามนุ่มนวล
+  const lookAheadX = (gameState.mouseWorld.x - p.x) * 0.085;
+  const lookAheadY = (gameState.mouseWorld.y - p.y) * 0.085;
+  const targetCamX = p.x + clamp(lookAheadX, -115, 115);
+  const targetCamY = p.y + clamp(lookAheadY, -85, 85);
+  gameState.camera.x += (targetCamX - gameState.camera.x) * Math.min(1, dt * 7.5);
+  gameState.camera.y += (targetCamY - gameState.camera.y) * Math.min(1, dt * 7.5);
+
+  // 5. อัปเดต AI มอนสเตอร์และบอส
+  updateEnemiesAI(dt, p);
+  updateBossAI(dt, p);
+
+  // 6. อัปเดตกระสุนผู้เล่น (`playerBolts`)
+  const foes = getAllActiveFoes();
   for (let i = gameState.playerBolts.length - 1; i >= 0; i--) {
     const b = gameState.playerBolts[i];
-    b.life -= dt;
     b.x += b.vx * dt;
     b.y += b.vy * dt;
-    let consumed = b.life <= 0 || (!b.pierce && lineHitsPillar(b.x - b.vx * dt, b.y - b.vy * dt, b.x, b.y));
-    if (!consumed) {
-      const targets = gameState.boss ? [...gameState.enemies, gameState.boss] : gameState.enemies;
-      for (let t = 0; t < targets.length; t++) {
-        const en = targets[t];
-        if (!en || en.hp <= 0) continue;
-        if (b.pierce && b.hitIds && b.hitIds.has(en)) continue;
-        if (Math.hypot(en.x - b.x, en.y - b.y) <= en.r + b.r) {
-          if (b.pierce && b.hitIds) b.hitIds.add(en);
-          damageEnemy(en, b.dmg, b.vx * 0.25, b.vy * 0.25, true);
-          applyElementalAura(en, b.element || 'fire', b.dmg);
-          spawnSparks(b.x, b.y, b.color || '#ffb800', 6, 160);
-          if (!b.pierce) {
-            consumed = true;
-            break;
+    b.life -= dt;
+
+    if (b.life <= 0 || b.x < 40 || b.x > ARENA_W - 40 || b.y < 60 || b.y > ARENA_H - 40) {
+      gameState.playerBolts.splice(i, 1);
+      continue;
+    }
+
+    if (checkProjectileHitPillar(b.x, b.y, b.r * 0.6)) {
+      spawnSparks(b.x, b.y, 10, b.color, 65, 195, 2.4);
+      if (b.explosive) {
+        spawnShockwave(b.x, b.y, 110, '#ff6a00', 4.5);
+        for (let k = 0; k < foes.length; k++) {
+          if (foes[k].hp > 0 && Math.hypot(foes[k].x - b.x, foes[k].y - b.y) < 110) {
+            damageEnemy(foes[k], Math.round(b.dmg * 0.7), 'fire', false, 0, 0);
           }
+        }
+      }
+      gameState.playerBolts.splice(i, 1);
+      continue;
+    }
+
+    let consumed = false;
+    for (let j = 0; j < foes.length; j++) {
+      const en = foes[j];
+      if (en.hp <= 0 || b.hitIds.has(en)) continue;
+      if (Math.hypot(en.x - b.x, en.y - b.y) < en.r + b.r) {
+        b.hitIds.add(en);
+        damageEnemy(en, b.dmg, b.element, false, b.vx * 0.25, b.vy * 0.25);
+
+        if (b.explosive) {
+          spawnShockwave(b.x, b.y, 115, '#ff6a00', 4.5);
+          for (let k = 0; k < foes.length; k++) {
+            const other = foes[k];
+            if (other !== en && other.hp > 0 && Math.hypot(other.x - b.x, other.y - b.y) < 115) {
+              damageEnemy(other, Math.round(b.dmg * 0.65), 'fire', false, 0, 0);
+            }
+          }
+        } else if (b.chainOnHit) {
+          for (let k = 0; k < foes.length; k++) {
+            const other = foes[k];
+            if (other !== en && other.hp > 0 && Math.hypot(other.x - en.x, other.y - en.y) < 200) {
+              spawnLightningArc(en.x, en.y, other.x, other.y, '#e879f9', 3);
+              damageEnemy(other, Math.round(b.dmg * 0.55), 'volt', false, 0, 0);
+              break;
+            }
+          }
+        }
+
+        b.pierce--;
+        if (b.pierce <= 0) {
+          consumed = true;
+          break;
         }
       }
     }
     if (consumed) gameState.playerBolts.splice(i, 1);
   }
 
-  for (let i = gameState.enemies.length - 1; i >= 0; i--) {
-    const en = gameState.enemies[i];
-    en.hitFlash = Math.max(0, en.hitFlash - dt);
-    en.squash = Math.max(0, en.squash - dt * 2.2);
-    en.slowTimer = Math.max(0, en.slowTimer - dt);
-    en.shockTimer = Math.max(0, (en.shockTimer || 0) - dt);
-    en.vulnTimer = Math.max(0, (en.vulnTimer || 0) - dt);
-    en.reactionCd = Math.max(0, (en.reactionCd || 0) - dt);
-    if ((en.burnTimer || 0) > 0) {
-      en.burnTimer = Math.max(0, en.burnTimer - dt);
-      const burnTick = (9 + getConstellationRank('sol_1') * 7) * dt;
-      en.hp -= burnTick;
-      if (Math.random() < 0.25) spawnSparks(en.x, en.y, '#ff6a00', 1, 80);
-      if (en.hp <= 0) {
-        damageEnemy(en, 0, 0, 0, false);
-        continue;
-      }
-    }
-    const slowFactor = en.slowTimer > 0 ? 0.45 : 1.0;
-
-    const dx = p.x - en.x;
-    const dy = p.y - en.y;
-    const dist = Math.hypot(dx, dy) || 1;
-    const nx = dx / dist;
-    const ny = dy / dist;
-
-    if (en.type === 'weaver') {
-      en.fireCd -= dt * slowFactor;
-      if (en.fireCd <= 0) {
-        en.fireCd = 2.25;
-        const projSpd = en.element === 'volt' ? 350 : 300;
-        const projCol =
-          en.element === 'fire'
-            ? '#ff6a00'
-            : en.element === 'ice'
-            ? '#22d3ee'
-            : en.element === 'volt'
-            ? '#e879f9'
-            : '#a855f7';
-        gameState.enemyProjectiles.push({
-          x: en.x + nx * 22,
-          y: en.y + ny * 22,
-          vx: nx * projSpd,
-          vy: ny * projSpd,
-          r: 7,
-          dmg: en.dmg,
-          life: 3.0,
-          color: projCol,
-        });
-      }
-      const desiredDist = 240;
-      const moveSign = dist > desiredDist + 30 ? 1 : dist < desiredDist - 30 ? -0.5 : 0;
-      en.vx = en.vx * 0.85 + nx * en.speed * slowFactor * moveSign * 0.15;
-      en.vy = en.vy * 0.85 + ny * en.speed * slowFactor * moveSign * 0.15;
-    } else {
-      en.vx = en.vx * 0.84 + nx * en.speed * slowFactor * 0.16;
-      en.vy = en.vy * 0.84 + ny * en.speed * slowFactor * 0.16;
-    }
-
-    en.x += en.vx * dt;
-    en.y += en.vy * dt;
-    resolveWorldCollisions(en);
-
-    if (p.phasePayoffArmed && Math.hypot(p.x - en.x, p.y - en.y) <= p.r + en.r + 24) {
-      triggerPhasePayoff(p, en.x, en.y);
-    }
-    if (Math.hypot(p.x - en.x, p.y - en.y) < p.r + en.r) {
-      damagePlayer(en.dmg);
-    }
-  }
-
-  const boss = gameState.boss;
-  if (boss && boss.hp > 0) {
-    boss.hitFlash = Math.max(0, boss.hitFlash - dt);
-    boss.slowTimer = Math.max(0, boss.slowTimer - dt);
-    boss.burnTimer = Math.max(0, (boss.burnTimer || 0) - dt);
-    boss.shockTimer = Math.max(0, (boss.shockTimer || 0) - dt);
-    boss.vulnTimer = Math.max(0, (boss.vulnTimer || 0) - dt);
-    boss.reactionCd = Math.max(0, (boss.reactionCd || 0) - dt);
-
-    if (boss.burnTimer > 0) {
-      const burnTick = (9 + getConstellationRank('sol_1') * 7) * dt;
-      boss.hp -= burnTick;
-      if (Math.random() < 0.25) spawnSparks(boss.x, boss.y, '#ff6a00', 1, 80);
-      if (boss.hp <= 0) {
-        damageEnemy(boss, 0, 0, 0, false);
-      }
-    }
-
-    if (gameState.boss && gameState.boss.hp > 0) {
-      const slowFactor = boss.slowTimer > 0 ? 0.5 : 1.0;
-
-      if (boss.telegraph) {
-        boss.telegraph.timer -= dt;
-        if (boss.telegraph.timer <= 0) {
-          const tel = boss.telegraph;
-          boss.telegraph = null;
-
-          if (tel.kind === 'slam') {
-            addFloorDecal(tel.x, tel.y, tel.r * 0.65, 'scorch');
-            gameState.shockwaves.push({
-              x: tel.x,
-              y: tel.y,
-              r: 20,
-              maxR: tel.r,
-              life: 0.34,
-              maxLife: 0.34,
-              color: '#ff2a5f',
-              lineWidth: 5,
-            });
-            triggerDirectionalShake(12);
-            playCombatSfx('nova', 0.65);
-            if (Math.hypot(p.x - tel.x, p.y - tel.y) <= tel.r + p.r * 0.6) {
-              damagePlayer(boss.dmg + 8);
-            }
-          } else if (tel.kind === 'beam') {
-            playCombatSfx('beam', 1.0);
-            triggerDirectionalShake(8, Math.cos(tel.angle), Math.sin(tel.angle));
-            const count = boss.phase === 2 ? 14 : 9;
-            const projColor = boss.archetype === 'cryo_archon' ? '#22d3ee' : boss.archetype === 'volt_tyrant' ? '#c084fc' : '#ff2a5f';
-            for (let k = 0; k < count; k++) {
-              const ang = tel.angle + ((k - (count - 1) * 0.5) * 0.22);
-              gameState.enemyProjectiles.push({
-                x: boss.x + Math.cos(ang) * 44,
-                y: boss.y + Math.sin(ang) * 44,
-                vx: Math.cos(ang) * (boss.phase === 2 ? 340 : 265),
-                vy: Math.sin(ang) * (boss.phase === 2 ? 340 : 265),
-                r: 8,
-                dmg: boss.dmg,
-                life: 3.4,
-                color: projColor,
-              });
-            }
-          } else if (tel.kind === 'nova_ring') {
-            playCombatSfx('nova', 0.85);
-            triggerDirectionalShake(10);
-            const ringCount = boss.phase === 2 ? 16 : 12;
-            const ringCol = boss.archetype === 'cryo_archon' ? '#38bdf8' : boss.archetype === 'volt_tyrant' ? '#e879f9' : '#ffb800';
-            gameState.shockwaves.push({
-              x: boss.x, y: boss.y, r: 24, maxR: 250, life: 0.32, maxLife: 0.32, color: ringCol, lineWidth: 4.5,
-            });
-            for (let k = 0; k < ringCount; k++) {
-              const ang = (k / ringCount) * Math.PI * 2 + gameState.worldTime;
-              gameState.enemyProjectiles.push({
-                x: boss.x + Math.cos(ang) * 46,
-                y: boss.y + Math.sin(ang) * 46,
-                vx: Math.cos(ang) * (boss.phase === 2 ? 295 : 230),
-                vy: Math.sin(ang) * (boss.phase === 2 ? 295 : 230),
-                r: 7.5,
-                dmg: boss.dmg,
-                life: 3.6,
-                color: ringCol,
-              });
-            }
-          }
-        }
-      } else {
-        const dx = p.x - boss.x;
-        const dy = p.y - boss.y;
-        const dist = Math.hypot(dx, dy) || 1;
-        boss.vx = boss.vx * 0.88 + (dx / dist) * boss.speed * slowFactor * 0.12;
-        boss.vy = boss.vy * 0.88 + (dy / dist) * boss.speed * slowFactor * 0.12;
-        boss.x += boss.vx * dt;
-        boss.y += boss.vy * dt;
-        resolveWorldCollisions(boss);
-
-        if (dist < p.r + boss.r) {
-          damagePlayer(boss.dmg);
-        }
-
-        boss.patternTimer -= dt * slowFactor;
-        if (boss.patternTimer <= 0) {
-          const arch = BOSS_ARCHETYPES[boss.archetype] || BOSS_ARCHETYPES.sovereign;
-          boss.patternTimer = boss.phase === 2 ? arch.patternCd * 0.78 : arch.patternCd;
-          const seq = arch.key === 'cryo_archon'
-            ? ['nova_ring', 'slam', 'beam']
-            : arch.key === 'volt_tyrant'
-            ? ['beam', 'nova_ring', 'slam']
-            : ['slam', 'beam', 'nova_ring'];
-          const chosenKind = seq[(boss.patternIndex || 0) % seq.length];
-          boss.patternIndex = (boss.patternIndex || 0) + 1;
-
-          if (chosenKind === 'slam') {
-            boss.telegraph = {
-              kind: 'slam',
-              x: p.x,
-              y: p.y,
-              angle: Math.atan2(dy, dx),
-              r: boss.phase === 2 ? 170 : 138,
-              timer: 0.76,
-              maxTimer: 0.76,
-            };
-          } else if (chosenKind === 'nova_ring') {
-            boss.telegraph = {
-              kind: 'nova_ring',
-              x: boss.x,
-              y: boss.y,
-              angle: Math.atan2(dy, dx),
-              r: 230,
-              timer: 0.68,
-              maxTimer: 0.68,
-            };
-          } else {
-            boss.telegraph = {
-              kind: 'beam',
-              x: boss.x,
-              y: boss.y,
-              angle: Math.atan2(dy, dx),
-              r: 420,
-              timer: 0.62,
-              maxTimer: 0.62,
-            };
-          }
-        }
-      }
-    }
-  }
-
+  // 7. อัปเดตกระสุนศัตรู (`enemyProjectiles`) + บล็อกด้วยหิน/เสา
   for (let i = gameState.enemyProjectiles.length - 1; i >= 0; i--) {
     const pr = gameState.enemyProjectiles[i];
-    pr.life -= dt;
     pr.x += pr.vx * dt;
     pr.y += pr.vy * dt;
+    pr.life -= dt;
 
-    let remove = pr.life <= 0 || lineHitsPillar(pr.x - pr.vx * dt, pr.y - pr.vy * dt, pr.x, pr.y);
-    if (!remove && p.phasePayoffArmed && Math.hypot(p.x - pr.x, p.y - pr.y) <= p.r + pr.r + 34) {
-      triggerPhasePayoff(p, pr.x, pr.y);
-    }
-    if (!remove && Math.hypot(p.x - pr.x, p.y - pr.y) <= p.r + pr.r) {
-      damagePlayer(pr.dmg);
-      remove = true;
-    }
-    if (remove) gameState.enemyProjectiles.splice(i, 1);
-  }
-
-  // Update Loot Orbs (รองรับพร Soul Harvester + Solar Aegis Shield Refill)
-  const surgeGainMult = (1 + getConstellationRank('vlt_2') * 0.18) * (p.extraSurgeMult || 1.0);
-  const magnetRadius = 195 * (p.magnetMult || 1.0);
-  for (let i = gameState.loots.length - 1; i >= 0; i--) {
-    const orb = gameState.loots[i];
-    orb.life -= dt;
-    const dx = p.x - orb.x;
-    const dy = p.y - orb.y;
-    const dist = Math.hypot(dx, dy) || 1;
-
-    if (dist < magnetRadius) {
-      const pull = ((magnetRadius - dist) / magnetRadius) * 620;
-      orb.vx += (dx / dist) * pull * dt * 6;
-      orb.vy += (dy / dist) * pull * dt * 6;
-    } else {
-      orb.vx *= 0.92;
-      orb.vy *= 0.92;
-    }
-
-    orb.x += orb.vx * dt;
-    orb.y += orb.vy * dt;
-
-    if (dist <= p.r + orb.r + 8) {
-      if (orb.kind === 'heal') {
-        p.hp = Math.min(p.maxHp, p.hp + 18);
-        if ((p.maxShield || 0) > 0) p.shield = p.maxShield;
-        addFloatingText(p.x, p.y - 22, '+18 HP', '#10b981', 1.05);
-      } else if (orb.kind === 'surge') {
-        if (p.surgeTimer <= 0 && (p.surgeCd || 0) <= 0) {
-          p.surgeGauge = Math.min(100, p.surgeGauge + Math.round(26 * surgeGainMult));
-        }
-        addFloatingText(p.x, p.y - 22, '+OVERDRIVE', '#ffb800', 1.0);
-      } else {
-        gameState.score += 50;
-        if (p.surgeTimer <= 0 && (p.surgeCd || 0) <= 0) {
-          p.surgeGauge = Math.min(100, p.surgeGauge + Math.round(6 * surgeGainMult));
-        }
-      }
-      playCombatSfx('pickup', 1.0);
-      gameState.loots.splice(i, 1);
+    if (pr.life <= 0 || pr.x < 40 || pr.x > ARENA_W - 40 || pr.y < 60 || pr.y > ARENA_H - 40) {
+      gameState.enemyProjectiles.splice(i, 1);
       continue;
     }
 
-    if (orb.life <= 0) gameState.loots.splice(i, 1);
+    if (checkProjectileHitPillar(pr.x, pr.y, pr.r * 0.7)) {
+      spawnSparks(pr.x, pr.y, 10, pr.color, 70, 200, 2.4);
+      gameState.enemyProjectiles.splice(i, 1);
+      continue;
+    }
+
+    if (Math.hypot(p.x - pr.x, p.y - pr.y) < p.r + pr.r) {
+      damagePlayer(pr.dmg, pr.x, pr.y);
+      gameState.enemyProjectiles.splice(i, 1);
+    }
+  }
+
+  // 8. อัปเดตเศษผลึกน้ำแข็ง (`iceShards`)
+  for (let i = gameState.iceShards.length - 1; i >= 0; i--) {
+    const sh = gameState.iceShards[i];
+    sh.x += sh.vx * dt;
+    sh.y += sh.vy * dt;
+    sh.life -= dt;
+    if (sh.life <= 0 || checkProjectileHitPillar(sh.x, sh.y, 6)) {
+      gameState.iceShards.splice(i, 1);
+      continue;
+    }
+    for (let j = 0; j < foes.length; j++) {
+      const en = foes[j];
+      if (en.hp > 0 && Math.hypot(en.x - sh.x, en.y - sh.y) < en.r + sh.r) {
+        damageEnemy(en, sh.dmg || 18, 'ice', false, sh.vx * 0.18, sh.vy * 0.18);
+        gameState.iceShards.splice(i, 1);
+        break;
+      }
+    }
+  }
+
+  // 9. ไอเทมดรอป (`loots`)
+  for (let i = gameState.loots.length - 1; i >= 0; i--) {
+    const orb = gameState.loots[i];
+    orb.life -= dt;
+    if (orb.life <= 0) {
+      gameState.loots.splice(i, 1);
+      continue;
+    }
+    const d = Math.hypot(p.x - orb.x, p.y - orb.y);
+    if (d < 165) {
+      orb.x += ((p.x - orb.x) / (d || 1)) * 360 * dt;
+      orb.y += ((p.y - orb.y) / (d || 1)) * 360 * dt;
+    }
+    if (d < p.r + 16) {
+      if (orb.kind === 'heal') {
+        const amt = Math.round(p.maxHp * 0.16);
+        p.hp = Math.min(p.maxHp, p.hp + amt);
+        spawnFloatingText(p.x, p.y - 20, `+${amt} HP`, '#22c55e', 1.0);
+      } else if (orb.kind === 'surge') {
+        p.surgeGauge = Math.min(100, p.surgeGauge + 22);
+        spawnFloatingText(p.x, p.y - 20, '+22% SURGE', '#fbbf24', 1.0);
+      } else {
+        p.shards = (p.shards || 0) + 2;
+        spawnFloatingText(p.x, p.y - 20, '+2 SHARDS', '#38bdf8', 1.0);
+      }
+      playSfx('playPickup');
+      gameState.loots.splice(i, 1);
+    }
+  }
+
+  // 10. ควันคบเพลิง + อัปเดตอาร์เรย์เอฟเฟกต์ทั้งหมดแบบลูปถอยหลัง
+  if (typeof PILLARS !== 'undefined' && Math.random() < 0.28) {
+    const pil = PILLARS[Math.floor(Math.random() * PILLARS.length)];
+    if (pil && (pil.kind === 'brazier' || pil.kind === 'frost_torch' || pil.kind === 'fire_pit')) {
+      gameState.brazierSmoke.push({ x: pil.x + randRange(-8, 8), y: pil.y, r: randRange(8, 15), life: 1.7, maxLife: 1.7 });
+    }
+  }
+
+  for (let i = gameState.sparks.length - 1; i >= 0; i--) {
+    const sp = gameState.sparks[i];
+    sp.x += sp.vx * dt;
+    sp.y += sp.vy * dt;
+    sp.vx *= Math.max(0, 1 - dt * 5);
+    sp.vy *= Math.max(0, 1 - dt * 5);
+    sp.life -= dt;
+    if (sp.life <= 0) gameState.sparks.splice(i, 1);
+  }
+
+  for (let i = gameState.shockwaves.length - 1; i >= 0; i--) {
+    const sw = gameState.shockwaves[i];
+    sw.life -= dt;
+    const prog = 1 - Math.max(0, sw.life / sw.maxLife);
+    sw.r = 14 + (sw.maxR - 14) * prog;
+    if (sw.life <= 0) gameState.shockwaves.splice(i, 1);
+  }
+
+  for (let i = gameState.slashCrescents.length - 1; i >= 0; i--) {
+    gameState.slashCrescents[i].life -= dt;
+    if (gameState.slashCrescents[i].life <= 0) gameState.slashCrescents.splice(i, 1);
   }
 
   for (let i = gameState.slashes.length - 1; i >= 0; i--) {
     gameState.slashes[i].life -= dt;
     if (gameState.slashes[i].life <= 0) gameState.slashes.splice(i, 1);
   }
-  for (let i = gameState.bladeRibbons.length - 1; i >= 0; i--) {
-    gameState.bladeRibbons[i].life -= dt;
-    if (gameState.bladeRibbons[i].life <= 0) gameState.bladeRibbons.splice(i, 1);
-  }
+
   for (let i = gameState.lightningArcs.length - 1; i >= 0; i--) {
     gameState.lightningArcs[i].life -= dt;
     if (gameState.lightningArcs[i].life <= 0) gameState.lightningArcs.splice(i, 1);
   }
-  for (let i = gameState.iceShards.length - 1; i >= 0; i--) {
-    const sh = gameState.iceShards[i];
-    sh.life -= dt;
-    sh.vx *= 0.91;
-    sh.vy *= 0.91;
-    sh.x += sh.vx * dt;
-    sh.y += sh.vy * dt;
-    if (sh.life <= 0) gameState.iceShards.splice(i, 1);
-  }
-  for (let i = gameState.dissolvingCorpses.length - 1; i >= 0; i--) {
-    const dc = gameState.dissolvingCorpses[i];
-    dc.life -= dt;
-    dc.y -= 14 * dt;
-    if (Math.random() < 0.55) {
-      spawnSparks(
-        dc.x + (Math.random() - 0.5) * dc.r * 1.4,
-        dc.y + (Math.random() - 0.5) * dc.r * 1.4,
-        '#ffb800',
-        1,
-        70
-      );
-    }
-    if (dc.life <= 0) gameState.dissolvingCorpses.splice(i, 1);
-  }
-  for (let i = gameState.brazierSmoke.length - 1; i >= 0; i--) {
-    const sm = gameState.brazierSmoke[i];
-    sm.life -= dt;
-    sm.x += sm.vx * dt;
-    sm.y += sm.vy * dt;
-    sm.r += 10 * dt;
-    if (sm.life <= 0) gameState.brazierSmoke.splice(i, 1);
-  }
-  for (let i = gameState.shockwaves.length - 1; i >= 0; i--) {
-    const sw = gameState.shockwaves[i];
-    sw.life -= dt;
-    const prog = 1 - Math.max(0, sw.life / sw.maxLife);
-    sw.r = 16 + (sw.maxR - 16) * prog;
-    if (sw.life <= 0) gameState.shockwaves.splice(i, 1);
-  }
-  for (let i = gameState.astralRings.length - 1; i >= 0; i--) {
-    const ar = gameState.astralRings[i];
-    ar.life -= dt;
-    ar.rot += dt * 3.8;
-    if (ar.life <= 0) gameState.astralRings.splice(i, 1);
-  }
-  for (let i = gameState.overdriveSigils.length - 1; i >= 0; i--) {
-    const osig = gameState.overdriveSigils[i];
-    osig.life -= dt;
-    osig.rot += dt * 1.45;
-    if (gameState.player) {
-      osig.x = gameState.player.x;
-      osig.y = gameState.player.y;
-    }
-    if (osig.life <= 0 || (!osig.aspectTag && gameState.player && gameState.player.surgeTimer <= 0)) {
-      gameState.overdriveSigils.splice(i, 1);
-    }
-  }
-  for (let i = gameState.vortexCores.length - 1; i >= 0; i--) {
-    const vc = gameState.vortexCores[i];
-    vc.life -= dt;
-    if (vc.life <= 0) gameState.vortexCores.splice(i, 1);
-  }
-  for (let i = gameState.slashCrescents.length - 1; i >= 0; i--) {
-    const sc = gameState.slashCrescents[i];
-    sc.life -= dt;
-    if (sc.life <= 0) gameState.slashCrescents.splice(i, 1);
-  }
+
   for (let i = gameState.afterimages.length - 1; i >= 0; i--) {
-    gameState.afterimages[i].alpha -= dt * 2.8;
+    gameState.afterimages[i].alpha -= dt * 3.2;
     if (gameState.afterimages[i].alpha <= 0) gameState.afterimages.splice(i, 1);
   }
-  for (let i = gameState.sparks.length - 1; i >= 0; i--) {
-    const sp = gameState.sparks[i];
-    sp.life -= dt;
-    sp.vx *= 0.92;
-    sp.vy *= 0.92;
-    sp.x += sp.vx * dt;
-    sp.y += sp.vy * dt;
-    if (sp.life <= 0) gameState.sparks.splice(i, 1);
+
+  for (let i = gameState.overdriveSigils.length - 1; i >= 0; i--) {
+    const os = gameState.overdriveSigils[i];
+    os.x = p.x;
+    os.y = p.y;
+    os.rot += dt * 1.4;
+    os.life -= dt;
+    if (os.life <= 0) gameState.overdriveSigils.splice(i, 1);
   }
+
+  for (let i = gameState.astralRings.length - 1; i >= 0; i--) {
+    const ar = gameState.astralRings[i];
+    ar.rot += dt * 2.2;
+    ar.life -= dt;
+    if (ar.life <= 0) gameState.astralRings.splice(i, 1);
+  }
+
+  for (let i = gameState.dissolvingCorpses.length - 1; i >= 0; i--) {
+    gameState.dissolvingCorpses[i].life -= dt;
+    if (gameState.dissolvingCorpses[i].life <= 0) gameState.dissolvingCorpses.splice(i, 1);
+  }
+
+  for (let i = gameState.brazierSmoke.length - 1; i >= 0; i--) {
+    gameState.brazierSmoke[i].life -= dt;
+    if (gameState.brazierSmoke[i].life <= 0) gameState.brazierSmoke.splice(i, 1);
+  }
+
   for (let i = gameState.floorDecals.length - 1; i >= 0; i--) {
-    const dec = gameState.floorDecals[i];
-    if (typeof dec.life === 'number') {
-      dec.life -= dt;
-      if (dec.life <= 0) {
-        gameState.floorDecals.splice(i, 1);
-      }
-    }
+    gameState.floorDecals[i].life -= dt;
+    if (gameState.floorDecals[i].life <= 0) gameState.floorDecals.splice(i, 1);
   }
+
   for (let i = gameState.floatingTexts.length - 1; i >= 0; i--) {
     const ft = gameState.floatingTexts[i];
-    ft.life -= dt;
     ft.y += ft.vy * dt;
-    ft.alpha = Math.max(0, ft.life / 0.8);
+    ft.vy *= Math.max(0, 1 - dt * 2.5);
+    ft.life -= dt;
+    ft.alpha = Math.max(0, ft.life / ft.maxLife);
     if (ft.life <= 0) gameState.floatingTexts.splice(i, 1);
   }
+
+  // 11. เคลียร์เวฟ (เฉพาะในดันเจี้ยน) -> บันทึกสถิติ + เปิดหน้าต่างเลือกพรประจำเวฟ + เปิดประตูอุโมงค์
+  if (gameState.zone !== 'lobby' && !gameState.portalOpen && gameState.enemies.length === 0 && (!gameState.boss || gameState.boss.hp <= 0)) {
+    gameState.portalOpen = true;
+    if (typeof saveHighScore === 'function') {
+      saveHighScore(gameState.score, gameState.wave);
+    }
+    spawnShockwave(TUNNEL_GATE.x, TUNNEL_GATE.y, 210, '#22d3ee', 6);
+    playSfx('setMusicIntensity', 'ambient');
+    pushCombatLog(`Wave ${gameState.wave} cleared! Choose a Tactical Blessing.`, '#67e8f9');
+    openWaveUpgradeModal();
+  }
 }
+window.updateSimulation = updateSimulation;
+window.updateGame = updateSimulation;
+
+// -------------------------------------------------------------------------
+// 8J. WAVE BLESSING SELECTION MODAL & GAMEOVER SAVE SYNC
+// -------------------------------------------------------------------------
+function resolveUpgradeContainer() {
+  const modal = document.getElementById('overlay-upgrade');
+  if (!modal) return { modal: null, container: null };
+
+  const knownIds = [
+    'upgrade-cards-container',
+    'upgrade-choices',
+    'upgrade-options',
+    'blessing-cards',
+    'blessings-container',
+  ];
+  for (let i = 0; i < knownIds.length; i++) {
+    const el = document.getElementById(knownIds[i]);
+    if (el) return { modal, container: el };
+  }
+
+  const candidates = Array.from(modal.querySelectorAll('div')).filter((div) => {
+    if (div === modal) return false;
+    const cls = div.className || '';
+    const hasGridOrFlex = /\b(grid|flex)\b/.test(cls);
+    const hasHeading = div.querySelector('h1, h2, h3, [data-i18n="upgradeTitle"], [data-i18n="upgradeSub"]');
+    return hasGridOrFlex && !hasHeading;
+  });
+
+  if (candidates.length > 0) {
+    candidates.sort((a, b) => b.querySelectorAll('*').length - a.querySelectorAll('*').length);
+    return { modal, container: candidates[candidates.length - 1] };
+  }
+
+  const created = document.createElement('div');
+  created.id = 'upgrade-cards-container';
+  created.className = 'grid grid-cols-1 md:grid-cols-3 gap-4 mt-4';
+  modal.appendChild(created);
+  return { modal, container: created };
+}
+
+function openWaveUpgradeModal() {
+  const poolSource = (typeof RELIC_POOL !== 'undefined' && Array.isArray(RELIC_POOL) && RELIC_POOL.length > 0)
+    ? RELIC_POOL
+    : [
+        {
+          id: 'twin_cleave',
+          tag: 'BLADE // ARC',
+          accent: 'border-orange-400 text-amber-300',
+          name: { th: 'Twin Cleave Arc', en: 'Twin Cleave Arc' },
+          desc: { th: 'เพิ่มความเสียหายฟัน +25%', en: '+25% blade damage' },
+        },
+        {
+          id: 'elemental_catalyst',
+          tag: 'ELEMENT // CATALYST',
+          accent: 'border-fuchsia-400 text-fuchsia-300',
+          name: { th: 'Elemental Catalyst', en: 'Elemental Catalyst' },
+          desc: { th: 'ปฏิกิริยาธาตุแรงขึ้น +45%', en: '+45% elemental reaction damage' },
+        },
+        {
+          id: 'overclock_cd',
+          tag: 'TEMPO // HASTE',
+          accent: 'border-cyan-300 text-cyan-200',
+          name: { th: 'Overclocked Phase', en: 'Overclocked Phase' },
+          desc: { th: 'ลดคูลดาวน์เร็วขึ้น 22% และเดินไวขึ้น +12%', en: '22% faster CD & +12% speed' },
+        },
+      ];
+
+  const shuffled = [...poolSource].sort(() => Math.random() - 0.5);
+  gameState.pendingUpgrades = shuffled.slice(0, Math.min(3, shuffled.length));
+  gameState.phase = 'upgrade';
+  gameState.mouseDown = false;
+  if (gameState.keys && typeof gameState.keys.clear === 'function') {
+    gameState.keys.clear();
+  }
+
+  renderUpgradeChoices(gameState.pendingUpgrades);
+
+  const { modal } = resolveUpgradeContainer();
+  if (modal) {
+    modal.classList.remove('hidden');
+    modal.style.display = '';
+    modal.style.zIndex = '60';
+  }
+}
+window.openWaveUpgradeModal = openWaveUpgradeModal;
+
+function renderUpgradeChoices(choices = []) {
+  const { container } = resolveUpgradeContainer();
+  if (!container) return;
+
+  const list = Array.isArray(choices) && choices.length > 0
+    ? choices
+    : (gameState.pendingUpgrades || []);
+
+  container.innerHTML = '';
+  const lang = typeof currentLang !== 'undefined' ? currentLang : 'th';
+
+  list.forEach((rel) => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    const accentCls = rel.accent || 'border-amber-400 text-amber-300';
+    btn.className = `bg-[#0b101d] border-2 ${accentCls} p-4 text-left hover:brightness-125 transition cursor-pointer flex flex-col justify-between gap-3`;
+
+    const titleText = typeof rel.name === 'object'
+      ? (rel.name[lang] || rel.name.en || rel.name.th || rel.id)
+      : (rel.name || rel.id);
+    const descText = typeof rel.desc === 'object'
+      ? (rel.desc[lang] || rel.desc.en || rel.desc.th || '')
+      : (rel.desc || '');
+
+    btn.innerHTML = `
+      <div>
+        <div class="font-mono text-[10px] tracking-widest opacity-80 mb-1">${rel.tag || 'BLESSING'}</div>
+        <div class="font-display text-base font-bold text-white mb-2">${titleText}</div>
+        <div class="text-xs text-slate-300 leading-relaxed">${descText}</div>
+      </div>
+      <div class="font-mono text-[11px] font-bold text-amber-300 pt-2 border-t border-slate-800">SELECT BLESSING ▸</div>
+    `;
+
+    btn.addEventListener('click', () => {
+      applyTacticalBlessing(rel);
+    });
+    container.appendChild(btn);
+  });
+}
+window.renderUpgradeChoices = renderUpgradeChoices;
+
+function applyTacticalBlessing(rel) {
+  const p = gameState.player;
+  if (p && rel) {
+    if (rel.id === 'twin_cleave' || rel.id === 'phantom_blade') {
+      p.dmgMult = (p.dmgMult || 1) + 0.25;
+    } else if (rel.id === 'executioner_edge') {
+      p.dmgMult = (p.dmgMult || 1) + 0.20;
+      p.critChance = Math.min(0.85, (p.critChance || 0.16) + 0.10);
+      p.critBonus = (p.critBonus || 0) + 0.10;
+    } else if (rel.id === 'elemental_catalyst') {
+      p.reactionMult = (p.reactionMult || 1) + 0.45;
+    } else if (rel.id === 'chain_nova') {
+      p.dmgMult = (p.dmgMult || 1) + 0.16;
+    } else if (rel.id === 'prismatic_shift') {
+      p.shiftBurstLevel = (p.shiftBurstLevel || 0) + 1;
+    } else if (rel.id === 'vampiric_edge') {
+      p.lifeSteal = (p.lifeSteal || 0) + 0.04;
+      p.blessingHpBonus = (p.blessingHpBonus || 50) + 25;
+      p.maxHp += 25;
+      p.hp = Math.min(p.maxHp, p.hp + 25);
+    } else if (rel.id === 'thorns_aegis') {
+      p.dmgMult = (p.dmgMult || 1) + 0.12;
+      p.shield = Math.min(p.maxHp * 0.6, (p.shield || 0) + 20);
+    } else if (rel.id === 'second_wind') {
+      p.shield = Math.min(p.maxHp * 0.6, (p.shield || 0) + 35);
+    } else if (rel.id === 'overclock_cd') {
+      p.cooldownScale = Math.max(0.45, (p.cooldownScale || 1) * 0.78);
+      p.cdScale = p.cooldownScale;
+      p.speedMult = (p.speedMult || 1) + 0.12;
+    } else if (rel.id === 'phase_lightning') {
+      p.maxDashCharges = (p.maxDashCharges || 2) + 1;
+      p.dashCharges = p.maxDashCharges;
+    } else if (rel.id === 'void_piercer') {
+      p.dmgMult = (p.dmgMult || 1) + 0.22;
+      p.cooldownScale = Math.max(0.45, (p.cooldownScale || 1) * 0.85);
+      p.cdScale = p.cooldownScale;
+    } else if (rel.id === 'blood_frenzy') {
+      p.surgeDuration = (p.surgeDuration || 7.5) + 2.0;
+    } else if (rel.id === 'solar_echo') {
+      p.cooldownScale = Math.max(0.45, (p.cooldownScale || 1) * 0.75);
+      p.cdScale = p.cooldownScale;
+      p.dmgMult = (p.dmgMult || 1) + 0.15;
+    } else if (rel.id === 'orb_magnet') {
+      p.shardBonus = (p.shardBonus || 0) + 2;
+      p.shards = (p.shards || 0) + 2;
+    } else {
+      p.dmgMult = (p.dmgMult || 1) + 0.18;
+    }
+
+    const lang = typeof currentLang !== 'undefined' ? currentLang : 'th';
+    const label = typeof rel.name === 'object'
+      ? (rel.name[lang] || rel.name.en || rel.id)
+      : (rel.name || rel.id);
+    spawnFloatingText(p.x, p.y - 42, `${label}!`, '#fde047', 1.2);
+    pushCombatLog(`Blessing granted: ${label}`, '#fde047');
+    playSfx('playPickup');
+  }
+
+  gameState.pendingUpgrades = [];
+  const modal = document.getElementById('overlay-upgrade');
+  if (modal) {
+    modal.classList.add('hidden');
+  }
+  gameState.phase = 'playing';
+  if (p) {
+    spawnFloatingText(p.x, p.y - 62, 'ENTER TUNNEL ▸', '#67e8f9', 1.15);
+  }
+  if (typeof syncHudDom === 'function') syncHudDom();
+}
+window.applyTacticalBlessing = applyTacticalBlessing;
+
+function syncSaveAndGameOverStats(wave, score, kills) {
+  const safeWave = Math.max(1, Number.isFinite(wave) ? Math.round(wave) : (gameState.wave || 1));
+  const safeScore = Math.max(0, Number.isFinite(score) ? Math.round(score) : (gameState.score || 0));
+  const safeKills = Math.max(0, Number.isFinite(kills) ? Math.round(kills) : (gameState.kills || 0));
+
+  if (typeof saveHighScore === 'function') {
+    saveHighScore(safeScore, safeWave);
+  } else {
+    try {
+      const key = typeof STORAGE_KEY !== 'undefined' ? STORAGE_KEY : 'obsidian_vanguard_arpg_save_v2';
+      const prev = JSON.parse(localStorage.getItem(key) || '{"highScore":0,"maxWave":1}');
+      const next = {
+        highScore: Math.max(prev.highScore || 0, safeScore),
+        maxWave: Math.max(prev.maxWave || 1, safeWave),
+      };
+      localStorage.setItem(key, JSON.stringify(next));
+      if (typeof saveData === 'object' && saveData) {
+        saveData.highScore = next.highScore;
+        saveData.maxWave = next.maxWave;
+      }
+      if (typeof refreshHighScoreUI === 'function') refreshHighScoreUI();
+    } catch (_) {}
+  }
+
+  const scoreStr = String(safeScore).padStart(6, '0');
+  const waveStr = String(safeWave).padStart(2, '0');
+  const killsStr = String(safeKills);
+
+  const goEl = document.getElementById('overlay-gameover');
+  if (!goEl) return;
+
+  const setByIds = (ids, val) => {
+    for (let i = 0; i < ids.length; i++) {
+      const el = document.getElementById(ids[i]);
+      if (el) el.textContent = val;
+    }
+  };
+
+  setByIds(['final-score', 'gameover-score', 'go-score', 'stat-final-score', 'end-score'], scoreStr);
+  setByIds(['final-wave', 'gameover-wave', 'go-wave', 'stat-final-wave', 'end-wave'], waveStr);
+  setByIds(['final-kills', 'gameover-kills', 'go-kills', 'stat-final-kills', 'end-kills'], killsStr);
+
+  const i18nMap = {
+    finalScore: scoreStr,
+    finalWave: waveStr,
+    finalKills: killsStr,
+  };
+  Object.entries(i18nMap).forEach(([key, val]) => {
+    const lbl = goEl.querySelector(`[data-i18n="${key}"]`);
+    if (lbl && lbl.parentElement) {
+      const targetChild = Array.from(lbl.parentElement.children).find((ch) => ch !== lbl && !ch.matches('[data-i18n]'));
+      if (targetChild) targetChild.textContent = val;
+    }
+  });
+
+  const statBoxes = goEl.querySelectorAll('div');
+  statBoxes.forEach((box) => {
+    if (box.children.length === 2) {
+      const firstTxt = (box.children[0].textContent || '').trim().toLowerCase();
+      const secondEl = box.children[1];
+      if (!secondEl.querySelector('*')) {
+        if (firstTxt.includes('คะแนน') || firstTxt.includes('score')) secondEl.textContent = scoreStr;
+        else if (firstTxt.includes('เวฟ') || firstTxt.includes('wave')) secondEl.textContent = waveStr;
+        else if (firstTxt.includes('กำจัด') || firstTxt.includes('kill')) secondEl.textContent = killsStr;
+      }
+    }
+  });
+
+  goEl.classList.remove('hidden');
+}
+
+function showGameOverScreen(wave, score, kills) {
+  syncSaveAndGameOverStats(wave, score, kills);
+}
+window.showGameOverScreen = showGameOverScreen;
+window.syncSaveAndGameOverStats = syncSaveAndGameOverStats;
+
+// -------------------------------------------------------------------------
+// 8K. COMPATIBILITY BRIDGE FOR main.js & config.js
+// -------------------------------------------------------------------------
+function startNewRun() {
+  if (typeof ensureAudio === 'function') ensureAudio();
+
+  [
+    'overlay-start',
+    'overlay-pause',
+    'overlay-gameover',
+    'overlay-upgrade',
+    'overlay-tree',
+    'overlay-forge',
+  ].forEach((id) => {
+    document.getElementById(id)?.classList.add('hidden');
+  });
+
+  resetGameState();
+  if (typeof syncHudDom === 'function') syncHudDom();
+}
+
+const performBladeCleave = performPrimaryAttack;
+const performVoidLance = castLanceSkill;
+const performPulseNova = castNovaSkill;
+const performBloodGoldSurge = activateOverdrive;
+const performSolarCataclysm = castCataclysmSkill;
+const performDodgeRoll = performPhaseDash;
+const addFloatingText = spawnFloatingText;
+
+window.startNewRun = startNewRun;
+window.performBladeCleave = performBladeCleave;
+window.performVoidLance = performVoidLance;
+window.performPulseNova = performPulseNova;
+window.performBloodGoldSurge = performBloodGoldSurge;
+window.performSolarCataclysm = performSolarCataclysm;
+window.performDodgeRoll = performDodgeRoll;
+window.addFloatingText = addFloatingText;
